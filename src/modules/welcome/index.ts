@@ -1,6 +1,6 @@
 import {
   ChannelType,
-  Client,
+  type Client,
   Events,
   MessageFlags,
   PermissionFlagsBits,
@@ -17,7 +17,9 @@ export function startWelcome(client: Client): void {
       const channel = await member.guild.channels.fetch(settings.welcome_channel_id);
       if (channel?.isSendable()) {
         await channel.send(
-          settings.welcome_message.replaceAll('{user}', `<@${member.id}>`).replaceAll('{server}', member.guild.name),
+          settings.welcome_message
+            .replaceAll('{user}', `<@${member.id}>`)
+            .replaceAll('{server}', member.guild.name),
         );
       }
     } catch (err) {

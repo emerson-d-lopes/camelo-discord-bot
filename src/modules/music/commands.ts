@@ -1,5 +1,6 @@
 import {
   ChannelType,
+  type ChatInputCommandInteraction,
   EmbedBuilder,
   GuildMember,
   MessageFlags,
@@ -8,18 +9,39 @@ import {
 } from 'discord.js';
 import type { Command } from '../../commands.js';
 import { setMusicChannel } from '../../db.js';
-import { getOrCreateSession, getSession, resolveTracks, type LoopMode } from './player.js';
+import { ephemeral } from '../../interactions.js';
+import { cappedText } from '../../security.js';
+import {
+  type ActionReply,
+  nowPlayingEmbed,
+  pauseAction,
+  playAction,
+  queueEmbed,
+  resumeAction,
+  shuffleAction,
+  skipAction,
+  stopAction,
+  volumeAction,
+} from './actions.js';
+import { getOrCreateSession, getSession, type LoopMode } from './player.js';
 
-function memberVoiceChannel(interaction: Parameters<Command['execute']>[0]) {
+function memberVoiceChannel(interaction: ChatInputCommandInteraction) {
   const member = interaction.member;
   if (member instanceof GuildMember) return member.voice.channel;
   return null;
 }
 
-function formatMs(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  return `${m}:${String(s % 60).padStart(2, '0')}`;
+function sessionFor(interaction: ChatInputCommandInteraction) {
+  return interaction.guildId ? getSession(interaction.guildId) : undefined;
+}
+
+/** Render an ActionReply as an interaction reply (ephemeral hint honoured, never pings). */
+function send(interaction: ChatInputCommandInteraction, r: ActionReply): Promise<unknown> {
+  return interaction.reply({
+    content: r.text,
+    allowedMentions: { parse: [] },
+    ...(r.ephemeral ? { flags: MessageFlags.Ephemeral } : {}),
+  });
 }
 
 const play: Command = {
@@ -32,81 +54,27 @@ const play: Command = {
   async execute(interaction) {
     const channel = memberVoiceChannel(interaction);
     if (!channel) {
-      await interaction.reply({
-        content: 'Join a voice channel first.',
-        flags: MessageFlags.Ephemeral,
-      });
+      await ephemeral(interaction, 'Join a voice channel first.');
       return;
     }
-
     await interaction.deferReply();
-    const query = interaction.options.getString('query', true);
-
-    let tracks;
-    try {
-      tracks = await resolveTracks(query, interaction.user.id);
-    } catch (err) {
-      await interaction.editReply(
-        `Could not find anything for that. ${err instanceof Error ? err.message : ''}`,
-      );
-      return;
-    }
-
-    let session;
-    try {
-      session = await getOrCreateSession(channel);
-    } catch (err) {
-      await interaction.editReply(`❌ ${err instanceof Error ? err.message : 'Could not join voice.'}`);
-      return;
-    }
-    const restoredCount = session.queue.length;
-    const wasIdle = session.current === null;
-    for (const track of tracks) session.enqueue(track);
-
-    const first = tracks[0];
-    const restoredNote =
-      wasIdle && restoredCount > 0 ? ` (restored ${restoredCount} queued from last run)` : '';
-    // parse:[] — an untrusted track title must never resolve into a ping.
-    const noPing = { allowedMentions: { parse: [] as const } };
-    if (tracks.length > 1) {
-      await interaction.editReply({
-        content: `➕ Queued **${tracks.length}** tracks from playlist/mix — ${
-          wasIdle ? 'starting with' : 'first up'
-        }: **${first.title}** (${first.duration})${restoredNote}`,
-        ...noPing,
-      });
-    } else {
-      await interaction.editReply({
-        content: wasIdle
-          ? `▶️ Now playing: **${first.title}** (${first.duration})${restoredNote}`
-          : `➕ Queued: **${first.title}** (${first.duration}) — position ${session.queue.length}`,
-        ...noPing,
-      });
-    }
+    const result = await playAction(
+      channel,
+      interaction.options.getString('query', true),
+      interaction.user.id,
+    );
+    await interaction.editReply({ content: result.text, allowedMentions: { parse: [] } });
   },
 };
 
 const nowplaying: Command = {
   data: new SlashCommandBuilder().setName('nowplaying').setDescription('Show the current song'),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
-    if (!session?.current) {
-      await interaction.reply({ content: 'Nothing is playing.', flags: MessageFlags.Ephemeral });
+    const embed = nowPlayingEmbed(sessionFor(interaction));
+    if (!embed) {
+      await ephemeral(interaction, 'Nothing is playing.');
       return;
     }
-    const t = session.current;
-    const embed = new EmbedBuilder()
-      .setTitle('🎵 Now playing')
-      .setDescription(t.url.startsWith('http') ? `**[${t.title}](${t.url})**` : `**${t.title}**`)
-      .addFields(
-        { name: 'Elapsed', value: `${formatMs(session.elapsedMs())} / ${t.duration}`, inline: true },
-        { name: 'Requested by', value: `<@${t.requestedBy}>`, inline: true },
-        {
-          name: 'Mode',
-          value: `loop: ${session.loopMode} · autoplay: ${session.autoplay ? 'on' : 'off'} · vol: ${Math.round(session.volume * 100)}%`,
-          inline: true,
-        },
-      );
     await interaction.reply({ embeds: [embed] });
   },
 };
@@ -116,82 +84,45 @@ const skip: Command = {
     .setName('skip')
     .setDescription('Vote to skip the current song (requester skips instantly)'),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
-    if (!session?.current) {
-      await interaction.reply({ content: 'Nothing is playing.', flags: MessageFlags.Ephemeral });
-      return;
-    }
-    const track = session.current;
     const channel = memberVoiceChannel(interaction);
     const listeners = channel ? channel.members.filter((m) => !m.user.bot).size : 1;
-
-    if (track.requestedBy === interaction.user.id || listeners <= 2) {
-      session.skip();
-      await interaction.reply(`⏭️ Skipped **${track.title}**.`);
-      return;
-    }
-
-    session.skipVotes.add(interaction.user.id);
-    const needed = Math.ceil(listeners / 2);
-    if (session.skipVotes.size >= needed) {
-      session.skip();
-      await interaction.reply(`⏭️ Vote passed (${session.skipVotes.size}/${needed}) — skipped **${track.title}**.`);
-    } else {
-      await interaction.reply(
-        `🗳️ Skip vote: **${session.skipVotes.size}/${needed}** for **${track.title}**.`,
-      );
-    }
+    await send(interaction, skipAction(sessionFor(interaction), interaction.user.id, listeners));
   },
 };
 
 const pause: Command = {
   data: new SlashCommandBuilder().setName('pause').setDescription('Pause playback'),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
-    if (!session?.current || !session.pause()) {
-      await interaction.reply({ content: 'Nothing to pause.', flags: MessageFlags.Ephemeral });
-      return;
-    }
-    await interaction.reply('⏸️ Paused.');
+    await send(interaction, pauseAction(sessionFor(interaction)));
   },
 };
 
 const resume: Command = {
   data: new SlashCommandBuilder().setName('resume').setDescription('Resume playback'),
   async execute(interaction) {
-    let session = interaction.guildId ? getSession(interaction.guildId) : undefined;
-    if (!session) {
-      // After a restart no session exists yet — join the caller's channel,
-      // which also restores the persisted queue.
-      const channel = memberVoiceChannel(interaction);
-      if (!channel) {
-        await interaction.reply({ content: 'Nothing to resume.', flags: MessageFlags.Ephemeral });
-        return;
-      }
-      await interaction.deferReply();
-      try {
-        session = await getOrCreateSession(channel);
-      } catch (err) {
-        await interaction.editReply(`❌ ${err instanceof Error ? err.message : 'Could not join voice.'}`);
-        return;
-      }
-      if (session.resumeIfIdle()) {
-        await interaction.editReply('▶️ Resuming the restored queue.');
-      } else {
-        await interaction.editReply('Nothing to resume — queue is empty.');
-      }
+    const session = sessionFor(interaction);
+    if (session) {
+      await send(interaction, resumeAction(session));
       return;
     }
-    if (session.resume()) {
-      await interaction.reply('▶️ Resumed.');
+    // After a restart no session exists — join the caller's channel, which
+    // also restores the persisted queue.
+    const channel = memberVoiceChannel(interaction);
+    if (!channel) {
+      await ephemeral(interaction, 'Nothing to resume.');
       return;
     }
-    // Also resumes a queue restored from a previous run.
-    if (session.resumeIfIdle()) {
-      await interaction.reply('▶️ Resuming the restored queue.');
+    await interaction.deferReply();
+    let joined;
+    try {
+      joined = await getOrCreateSession(channel);
+    } catch (err) {
+      await interaction.editReply(`❌ ${err instanceof Error ? err.message : 'Could not join voice.'}`);
       return;
     }
-    await interaction.reply({ content: 'Nothing to resume.', flags: MessageFlags.Ephemeral });
+    await interaction.editReply(
+      joined.resumeIfIdle() ? '▶️ Resuming the restored queue.' : 'Nothing to resume — queue is empty.',
+    );
   },
 };
 
@@ -200,51 +131,26 @@ const stop: Command = {
     .setName('stop')
     .setDescription('Stop playback, clear the queue, and leave the voice channel'),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
-    if (!session) {
-      await interaction.reply({ content: 'Not in a voice channel.', flags: MessageFlags.Ephemeral });
-      return;
-    }
-    session.stop();
-    await interaction.reply('⏹️ Stopped, cleared the queue, and left the channel.');
+    await send(interaction, stopAction(sessionFor(interaction)));
   },
 };
 
 const queue: Command = {
   data: new SlashCommandBuilder().setName('queue').setDescription('Show the current queue'),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
-    if (!session || (!session.current && session.queue.length === 0)) {
-      await interaction.reply({ content: 'Queue is empty.', flags: MessageFlags.Ephemeral });
+    const embed = queueEmbed(sessionFor(interaction));
+    if (!embed) {
+      await ephemeral(interaction, 'Queue is empty.');
       return;
     }
-    const lines = [
-      session.current
-        ? `**Now playing:** ${session.current.title} (${session.current.duration})`
-        : '**Nothing playing** — `/resume` to start the restored queue.',
-      ...session.queue.slice(0, 10).map((t, i) => `${i + 1}. ${t.title} (${t.duration})`),
-    ];
-    if (session.queue.length > 10) lines.push(`…and ${session.queue.length - 10} more`);
-
-    await interaction.reply({
-      embeds: [new EmbedBuilder().setTitle('🎵 Queue').setDescription(lines.join('\n'))],
-    });
+    await interaction.reply({ embeds: [embed] });
   },
 };
 
 const shuffle: Command = {
   data: new SlashCommandBuilder().setName('shuffle').setDescription('Shuffle the queue'),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
-    if (!session || session.queue.length < 2) {
-      await interaction.reply({
-        content: 'Need at least 2 queued songs to shuffle.',
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-    session.shuffle();
-    await interaction.reply(`🔀 Shuffled ${session.queue.length} songs.`);
+    await send(interaction, shuffleAction(sessionFor(interaction)));
   },
 };
 
@@ -264,9 +170,9 @@ const loop: Command = {
         ),
     ),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
+    const session = sessionFor(interaction);
     if (!session) {
-      await interaction.reply({ content: 'Nothing is playing.', flags: MessageFlags.Ephemeral });
+      await ephemeral(interaction, 'Nothing is playing.');
       return;
     }
     const mode = interaction.options.getString('mode', true) as LoopMode;
@@ -288,13 +194,15 @@ const autoplay: Command = {
         .addChoices({ name: 'on', value: 'on' }, { name: 'off', value: 'off' }),
     ),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
+    const session = sessionFor(interaction);
     if (!session) {
-      await interaction.reply({ content: 'Nothing is playing.', flags: MessageFlags.Ephemeral });
+      await ephemeral(interaction, 'Nothing is playing.');
       return;
     }
     session.autoplay = interaction.options.getString('mode', true) === 'on';
-    await interaction.reply(session.autoplay ? '♾️ Autoplay on — related tracks when queue empties.' : 'Autoplay off.');
+    await interaction.reply(
+      session.autoplay ? '♾️ Autoplay on — related tracks when queue empties.' : 'Autoplay off.',
+    );
   },
 };
 
@@ -303,17 +211,18 @@ const volume: Command = {
     .setName('volume')
     .setDescription('Set playback volume')
     .addIntegerOption((o) =>
-      o.setName('percent').setDescription('0-200 (100 = normal)').setRequired(true).setMinValue(0).setMaxValue(200),
+      o
+        .setName('percent')
+        .setDescription('0-200 (100 = normal)')
+        .setRequired(true)
+        .setMinValue(0)
+        .setMaxValue(200),
     ),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
-    if (!session) {
-      await interaction.reply({ content: 'Nothing is playing.', flags: MessageFlags.Ephemeral });
-      return;
-    }
-    const pct = interaction.options.getInteger('percent', true);
-    session.setVolume(pct);
-    await interaction.reply(`🔊 Volume: ${pct}%`);
+    await send(
+      interaction,
+      volumeAction(sessionFor(interaction), interaction.options.getInteger('percent', true)),
+    );
   },
 };
 
@@ -325,14 +234,16 @@ const remove: Command = {
       o.setName('position').setDescription('Queue position (see /queue)').setRequired(true).setMinValue(1),
     ),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
     const pos = interaction.options.getInteger('position', true);
-    const removed = session?.removeAt(pos);
+    const removed = sessionFor(interaction)?.removeAt(pos);
     if (!removed) {
-      await interaction.reply({ content: `No song at position ${pos}.`, flags: MessageFlags.Ephemeral });
+      await ephemeral(interaction, `No song at position ${pos}.`);
       return;
     }
-    await interaction.reply(`🗑️ Removed **${removed.title}** from the queue.`);
+    await interaction.reply({
+      content: `🗑️ Removed **${removed.title}** from the queue.`,
+      allowedMentions: { parse: [] },
+    });
   },
 };
 
@@ -340,27 +251,30 @@ const move: Command = {
   data: new SlashCommandBuilder()
     .setName('move')
     .setDescription('Move a song to another position in the queue')
-    .addIntegerOption((o) => o.setName('from').setDescription('Current position').setRequired(true).setMinValue(1))
+    .addIntegerOption((o) =>
+      o.setName('from').setDescription('Current position').setRequired(true).setMinValue(1),
+    )
     .addIntegerOption((o) => o.setName('to').setDescription('New position').setRequired(true).setMinValue(1)),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
-    const from = interaction.options.getInteger('from', true);
     const to = interaction.options.getInteger('to', true);
-    const moved = session?.move(from, to);
+    const moved = sessionFor(interaction)?.move(interaction.options.getInteger('from', true), to);
     if (!moved) {
-      await interaction.reply({ content: 'Invalid positions.', flags: MessageFlags.Ephemeral });
+      await ephemeral(interaction, 'Invalid positions.');
       return;
     }
-    await interaction.reply(`↕️ Moved **${moved.title}** to position ${to}.`);
+    await interaction.reply({
+      content: `↕️ Moved **${moved.title}** to position ${to}.`,
+      allowedMentions: { parse: [] },
+    });
   },
 };
 
 const clear: Command = {
   data: new SlashCommandBuilder().setName('clear').setDescription('Clear the queue (keeps current song)'),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
+    const session = sessionFor(interaction);
     if (!session || session.queue.length === 0) {
-      await interaction.reply({ content: 'Queue is already empty.', flags: MessageFlags.Ephemeral });
+      await ephemeral(interaction, 'Queue is already empty.');
       return;
     }
     const n = session.clear();
@@ -380,13 +294,10 @@ const lyrics: Command = {
     .setDescription('Lyrics for the current song (or a search)')
     .addStringOption((o) => o.setName('song').setDescription('Song to search (default: now playing)')),
   async execute(interaction) {
-    const session = interaction.guildId ? getSession(interaction.guildId) : undefined;
+    const session = sessionFor(interaction);
     const query = interaction.options.getString('song') ?? session?.current?.title;
     if (!query) {
-      await interaction.reply({
-        content: 'Nothing playing — pass the `song` option.',
-        flags: MessageFlags.Ephemeral,
-      });
+      await ephemeral(interaction, 'Nothing playing — pass the `song` option.');
       return;
     }
     await interaction.deferReply();
@@ -401,7 +312,7 @@ const lyrics: Command = {
         headers: { 'user-agent': 'camelo-discord-bot' },
         signal: AbortSignal.timeout(10_000),
       });
-      const results = (await res.json()) as LrcResult[];
+      const results = JSON.parse(await cappedText(res)) as LrcResult[];
       const hit = results.find((r) => r.plainLyrics);
       if (!hit?.plainLyrics) {
         await interaction.editReply(`No lyrics found for "${cleaned}".`);
@@ -432,7 +343,11 @@ const musicchannel: Command = {
         .setName('set')
         .setDescription('Enable for a channel')
         .addChannelOption((o) =>
-          o.setName('channel').setDescription('The music channel').addChannelTypes(ChannelType.GuildText).setRequired(true),
+          o
+            .setName('channel')
+            .setDescription('The music channel')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true),
         ),
     )
     .addSubcommand((s) => s.setName('off').setDescription('Disable the music channel')),
@@ -455,6 +370,20 @@ const musicchannel: Command = {
 };
 
 export const musicCommands: Command[] = [
-  play, nowplaying, skip, pause, resume, stop, queue,
-  shuffle, loop, autoplay, volume, remove, move, clear, lyrics, musicchannel,
+  play,
+  nowplaying,
+  skip,
+  pause,
+  resume,
+  stop,
+  queue,
+  shuffle,
+  loop,
+  autoplay,
+  volume,
+  remove,
+  move,
+  clear,
+  lyrics,
+  musicchannel,
 ];

@@ -1,5 +1,5 @@
-import { lookup } from 'node:dns/promises';
 import { lookup as dnsLookup } from 'node:dns';
+import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { Agent, fetch as undiciFetch } from 'undici';
 
@@ -31,9 +31,15 @@ setInterval(() => {
 // --- media URL allowlist (/play links) ---
 
 const MEDIA_HOSTS = new Set([
-  'youtube.com', 'www.youtube.com', 'music.youtube.com', 'm.youtube.com', 'youtu.be',
+  'youtube.com',
+  'www.youtube.com',
+  'music.youtube.com',
+  'm.youtube.com',
+  'youtu.be',
   'open.spotify.com',
-  'soundcloud.com', 'www.soundcloud.com', 'on.soundcloud.com',
+  'soundcloud.com',
+  'www.soundcloud.com',
+  'on.soundcloud.com',
 ]);
 
 /** Only well-known media hosts may be handed to yt-dlp as URLs. */
@@ -62,8 +68,20 @@ function isPrivateIp(addr: string): boolean {
   const lower = addr.toLowerCase();
   if (lower === '::1' || lower === '::') return true;
   if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // ULA
-  if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true; // link-local
-  if (lower.startsWith('fec') || lower.startsWith('fed') || lower.startsWith('fee') || lower.startsWith('fef')) return true; // deprecated site-local
+  if (
+    lower.startsWith('fe8') ||
+    lower.startsWith('fe9') ||
+    lower.startsWith('fea') ||
+    lower.startsWith('feb')
+  )
+    return true; // link-local
+  if (
+    lower.startsWith('fec') ||
+    lower.startsWith('fed') ||
+    lower.startsWith('fee') ||
+    lower.startsWith('fef')
+  )
+    return true; // deprecated site-local
   if (lower.startsWith('64:ff9b:')) return true; // NAT64
   if (lower.startsWith('::ffff:')) return isPrivateIp(lower.slice(7)); // v4-mapped
   return false;
@@ -73,8 +91,11 @@ function isPrivateIp(addr: string): boolean {
 export async function hostIsPrivate(host: string): Promise<boolean> {
   const h = host.toLowerCase().replace(/^\[|\]$/g, '');
   if (
-    h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') ||
-    h.endsWith('.internal') || h.endsWith('.home.arpa')
+    h === 'localhost' ||
+    h.endsWith('.localhost') ||
+    h.endsWith('.local') ||
+    h.endsWith('.internal') ||
+    h.endsWith('.home.arpa')
   ) {
     return true;
   }
@@ -104,7 +125,13 @@ export async function assertPublicHttpUrl(raw: string): Promise<void> {
   if (u.username || u.password) throw new Error('URLs with credentials are not allowed.');
 
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.home.arpa')) {
+  if (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    host.endsWith('.home.arpa')
+  ) {
     throw new Error('Local addresses are not allowed.');
   }
   if (isIP(host)) {

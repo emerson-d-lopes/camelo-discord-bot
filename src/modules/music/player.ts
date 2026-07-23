@@ -1,17 +1,17 @@
+import { PassThrough } from 'node:stream';
 import {
-  AudioPlayer,
+  type AudioPlayer,
   AudioPlayerStatus,
-  AudioResource,
+  type AudioResource,
   createAudioPlayer,
   createAudioResource,
   entersState,
   joinVoiceChannel,
   StreamType,
-  VoiceConnection,
+  type VoiceConnection,
   VoiceConnectionStatus,
 } from '@discordjs/voice';
 import type { Client, VoiceBasedChannel } from 'discord.js';
-import { PassThrough } from 'node:stream';
 import { youtubeDl } from 'youtube-dl-exec';
 import { loadMusicState, recordPlay, saveMusicState } from '../../db.js';
 import { cappedText, isAllowedMediaUrl } from '../../security.js';
@@ -35,7 +35,8 @@ const RECENT_AUTOPLAY_MEMORY = 50;
 const MAX_YTDLP = 6;
 let ytdlpInFlight = 0;
 async function withYtdlpSlot<T>(fn: () => Promise<T>): Promise<T> {
-  if (ytdlpInFlight >= MAX_YTDLP) throw new Error('The bot is busy resolving other tracks — try again in a moment.');
+  if (ytdlpInFlight >= MAX_YTDLP)
+    throw new Error('The bot is busy resolving other tracks — try again in a moment.');
   ytdlpInFlight++;
   try {
     return await fn();
@@ -266,7 +267,8 @@ export class MusicSession {
     if (this.resolvingAutoplay) return undefined;
     this.resolvingAutoplay = true;
     try {
-      const videoId = last.url.match(/[?&]v=([\w-]{5,})/)?.[1] ?? last.url.match(/youtu\.be\/([\w-]{5,})/)?.[1];
+      const videoId =
+        last.url.match(/[?&]v=([\w-]{5,})/)?.[1] ?? last.url.match(/youtu\.be\/([\w-]{5,})/)?.[1];
       if (!videoId) return undefined;
       const mixUrl = `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`;
       const tracks = await resolveTracks(mixUrl, last.requestedBy);
@@ -488,12 +490,14 @@ async function spotifyPlaylistTracks(url: string, requestedBy: string): Promise<
   const entries = findTrackList(JSON.parse(json)) ?? [];
   const tracks = entries.slice(0, PLAYLIST_MAX).flatMap((e) => {
     if (!e.title) return [];
-    return [{
-      title: e.subtitle ? `${e.title} — ${e.subtitle}` : e.title,
-      url: `ytsearch1:${e.title} ${e.subtitle ?? ''}`.trim(),
-      duration: formatDuration(e.duration ? Math.round(e.duration / 1000) : undefined),
-      requestedBy,
-    }];
+    return [
+      {
+        title: e.subtitle ? `${e.title} — ${e.subtitle}` : e.title,
+        url: `ytsearch1:${e.title} ${e.subtitle ?? ''}`.trim(),
+        duration: formatDuration(e.duration ? Math.round(e.duration / 1000) : undefined),
+        requestedBy,
+      },
+    ];
   });
   if (tracks.length === 0) {
     throw new Error('No tracks found — the playlist may be private or region-locked.');
@@ -525,23 +529,25 @@ export async function resolveTracks(query: string, requestedBy: string): Promise
       ...(isPlaylist ? { yesPlaylist: true, playlistEnd: PLAYLIST_MAX } : { noPlaylist: true }),
     }),
   );
-  const info = (typeof raw === 'string' ? JSON.parse(raw) : raw) as
-    | (YtEntry & { _type?: string; entries?: YtEntry[] });
+  const info = (typeof raw === 'string' ? JSON.parse(raw) : raw) as YtEntry & {
+    _type?: string;
+    entries?: YtEntry[];
+  };
 
   const entries =
-    info._type === 'playlist'
-      ? (info.entries ?? []).slice(0, isPlaylist ? PLAYLIST_MAX : 1)
-      : [info];
+    info._type === 'playlist' ? (info.entries ?? []).slice(0, isPlaylist ? PLAYLIST_MAX : 1) : [info];
 
   const tracks = entries.flatMap((entry) => {
     const url = entryUrl(entry);
     if (!url) return [];
-    return [{
-      title: entry.title ?? url,
-      url,
-      duration: formatDuration(entry.duration),
-      requestedBy,
-    }];
+    return [
+      {
+        title: entry.title ?? url,
+        url,
+        duration: formatDuration(entry.duration),
+        requestedBy,
+      },
+    ];
   });
   if (tracks.length === 0) throw new Error('No results found.');
   return tracks;

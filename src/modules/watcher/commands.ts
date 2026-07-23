@@ -22,9 +22,7 @@ function sparkline(values: number[]): string {
   const min = Math.min(...values);
   const max = Math.max(...values);
   if (min === max) return SPARK[3].repeat(values.length);
-  return values
-    .map((v) => SPARK[Math.round(((v - min) / (max - min)) * (SPARK.length - 1))])
-    .join('');
+  return values.map((v) => SPARK[Math.round(((v - min) / (max - min)) * (SPARK.length - 1))]).join('');
 }
 
 function ownWatch(interaction: Parameters<Command['execute']>[0], id: number) {
@@ -39,7 +37,10 @@ const watch: Command = {
     .setDescription('Watch a product page for price changes')
     .addStringOption((o) => o.setName('url').setDescription('Product page URL').setRequired(true))
     .addNumberOption((o) =>
-      o.setName('target').setDescription('Alert with a ping when price drops to this or below').setMinValue(0),
+      o
+        .setName('target')
+        .setDescription('Alert with a ping when price drops to this or below')
+        .setMinValue(0),
     )
     .addStringOption((o) =>
       o.setName('selector').setDescription('CSS selector for the price element (only if auto-detect fails)'),

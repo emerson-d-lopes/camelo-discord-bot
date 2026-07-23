@@ -41,14 +41,15 @@ const roll: Command = {
   data: new SlashCommandBuilder()
     .setName('roll')
     .setDescription('Roll dice')
-    .addStringOption((o) =>
-      o.setName('dice').setDescription('e.g. d20, 2d6+3 (default d20)'),
-    ),
+    .addStringOption((o) => o.setName('dice').setDescription('e.g. d20, 2d6+3 (default d20)')),
   async execute(interaction) {
     const spec = interaction.options.getString('dice') ?? 'd20';
     const m = spec.replace(/\s/g, '').match(/^(\d*)d(\d+)([+-]\d+)?$/i);
     if (!m) {
-      await interaction.reply({ content: 'Bad dice spec. Try `d20`, `2d6`, `3d8+2`.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({
+        content: 'Bad dice spec. Try `d20`, `2d6`, `3d8+2`.',
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     const count = Math.min(Number(m[1] || 1), 100);
@@ -60,7 +61,10 @@ const roll: Command = {
     }
     const rolls = Array.from({ length: count }, () => 1 + Math.floor(Math.random() * sides));
     const total = rolls.reduce((a, b) => a + b, 0) + mod;
-    const detail = count > 1 || mod !== 0 ? ` (${rolls.join(' + ')}${mod ? ` ${mod > 0 ? '+' : '-'} ${Math.abs(mod)}` : ''})` : '';
+    const detail =
+      count > 1 || mod !== 0
+        ? ` (${rolls.join(' + ')}${mod ? ` ${mod > 0 ? '+' : '-'} ${Math.abs(mod)}` : ''})`
+        : '';
     await interaction.reply(`🎲 **${total}**${detail}`);
   },
 };

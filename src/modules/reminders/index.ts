@@ -1,4 +1,4 @@
-import { Client, EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
+import { type Client, EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import type { Command } from '../../commands.js';
 import { deleteReminder, dueReminders, getReminder, insertReminder, listReminders } from '../../db.js';
 
@@ -10,7 +10,8 @@ export function parseDuration(input: string): number | null {
   for (const m of input.matchAll(re)) {
     matched = true;
     const n = Number(m[1]);
-    ms += n * { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1_000 }[m[2].toLowerCase() as 'd' | 'h' | 'm' | 's'];
+    ms +=
+      n * { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1_000 }[m[2].toLowerCase() as 'd' | 'h' | 'm' | 's'];
   }
   if (!matched) {
     const bare = Number(input);
@@ -39,25 +40,22 @@ export function startReminders(client: Client): void {
 
 async function deliverDue(client: Client): Promise<void> {
   for (const r of dueReminders(Date.now())) {
-      deleteReminder(r.id);
-      const embed = new EmbedBuilder()
-        .setTitle('⏰ Reminder')
-        .setDescription(r.message)
-        .setColor(0x3498db);
-      try {
-        const user = await client.users.fetch(r.user_id);
-        await user.send({ embeds: [embed] });
-      } catch {
-        // DMs closed — channel fallback below
+    deleteReminder(r.id);
+    const embed = new EmbedBuilder().setTitle('⏰ Reminder').setDescription(r.message).setColor(0x3498db);
+    try {
+      const user = await client.users.fetch(r.user_id);
+      await user.send({ embeds: [embed] });
+    } catch {
+      // DMs closed — channel fallback below
+    }
+    try {
+      const channel = await client.channels.fetch(r.channel_id);
+      if (channel?.isSendable()) {
+        await channel.send({ content: `<@${r.user_id}>`, embeds: [embed] });
       }
-      try {
-        const channel = await client.channels.fetch(r.channel_id);
-        if (channel?.isSendable()) {
-          await channel.send({ content: `<@${r.user_id}>`, embeds: [embed] });
-        }
-      } catch {
-        // channel gone — nothing else to do
-      }
+    } catch {
+      // channel gone — nothing else to do
+    }
   }
 }
 
@@ -120,12 +118,17 @@ const unremind: Command = {
   data: new SlashCommandBuilder()
     .setName('unremind')
     .setDescription('Cancel a reminder')
-    .addIntegerOption((o) => o.setName('id').setDescription('Reminder id (see /reminders)').setRequired(true)),
+    .addIntegerOption((o) =>
+      o.setName('id').setDescription('Reminder id (see /reminders)').setRequired(true),
+    ),
   async execute(interaction) {
     const id = interaction.options.getInteger('id', true);
     const r = getReminder(id);
     if (!r || r.user_id !== interaction.user.id) {
-      await interaction.reply({ content: `No reminder #${id} belongs to you.`, flags: MessageFlags.Ephemeral });
+      await interaction.reply({
+        content: `No reminder #${id} belongs to you.`,
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     deleteReminder(id);

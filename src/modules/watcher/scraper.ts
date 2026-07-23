@@ -80,8 +80,7 @@ function findJsonLdPrice(node: unknown): JsonLdPrice | null {
       if (!offer || typeof offer !== 'object') continue;
       const o = offer as Record<string, unknown>;
       const rawPrice = o.price ?? o.lowPrice;
-      const price =
-        typeof rawPrice === 'number' ? rawPrice : parsePriceText(String(rawPrice ?? ''));
+      const price = typeof rawPrice === 'number' ? rawPrice : parsePriceText(String(rawPrice ?? ''));
       if (price !== null && price > 0) {
         return {
           price,

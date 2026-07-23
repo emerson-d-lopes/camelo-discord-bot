@@ -1,5 +1,5 @@
-import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
+import Database from 'better-sqlite3';
 
 mkdirSync('data', { recursive: true });
 
@@ -60,9 +60,7 @@ db.exec(`
 `);
 
 // Additive migrations for columns introduced after first release.
-const watchCols = (db.prepare(`PRAGMA table_info(watches)`).all() as { name: string }[]).map(
-  (c) => c.name,
-);
+const watchCols = (db.prepare(`PRAGMA table_info(watches)`).all() as { name: string }[]).map((c) => c.name);
 if (!watchCols.includes('interval_minutes')) {
   db.exec(`ALTER TABLE watches ADD COLUMN interval_minutes INTEGER`);
 }
@@ -167,9 +165,7 @@ export interface PricePoint {
 
 export function priceHistory(watchId: number, limit = 60): PricePoint[] {
   return db
-    .prepare(
-      'SELECT price, checked_at FROM price_history WHERE watch_id = ? ORDER BY id DESC LIMIT ?',
-    )
+    .prepare('SELECT price, checked_at FROM price_history WHERE watch_id = ? ORDER BY id DESC LIMIT ?')
     .all(watchId, limit)
     .reverse() as PricePoint[];
 }
@@ -195,9 +191,9 @@ export function saveMusicState(
 }
 
 export function loadMusicState(guildId: string): MusicState | undefined {
-  return db.prepare('SELECT queue_json, loop_mode, autoplay FROM music_state WHERE guild_id = ?').get(guildId) as
-    | MusicState
-    | undefined;
+  return db
+    .prepare('SELECT queue_json, loop_mode, autoplay FROM music_state WHERE guild_id = ?')
+    .get(guildId) as MusicState | undefined;
 }
 
 // --- reminders ---

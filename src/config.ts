@@ -15,8 +15,6 @@ export function requireEnv(...keys: ('token' | 'clientId')[]): void {
   const missing = keys.filter((k) => !config[k]);
   if (missing.length > 0) {
     const names = missing.map((k) => (k === 'token' ? 'DISCORD_TOKEN' : 'CLIENT_ID'));
-    throw new Error(
-      `Missing ${names.join(', ')} — copy .env.example to .env and fill it in.`,
-    );
+    throw new Error(`Missing ${names.join(', ')} — copy .env.example to .env and fill it in.`);
   }
 }

@@ -24,7 +24,10 @@ const RULES: [RegExp, Intent][] = [
   [/^(pause|pausa(r)?|espera)\b.{0,15}$/i, { action: 'pause' }],
   [/^(resume|continua(r)?|volta|unpause|despausa)\b.{0,20}$/i, { action: 'resume' }],
   [/^(queue|fila|lista|list)\b.{0,10}$/i, { action: 'queue' }],
-  [/^(np|now ?playing|what'?s playing|que (musica|música)( (é|e) essa)?|(o )?que (tá|ta|está) tocando)\??$/i, { action: 'nowplaying' }],
+  [
+    /^(np|now ?playing|what'?s playing|que (musica|música)( (é|e) essa)?|(o )?que (tá|ta|está) tocando)\??$/i,
+    { action: 'nowplaying' },
+  ],
   [/^(shuffle|embaralha(r)?|mistura(r)?|aleatorio|aleatório)\b.{0,10}$/i, { action: 'shuffle' }],
   [/^(louder|mais alto|aumenta|volume up|sobe o volume)\b.{0,15}$/i, { action: 'volume_up' }],
   [/^(quieter|mais baixo|abaixa|diminui|volume down|baixa o volume)\b.{0,15}$/i, { action: 'volume_down' }],
@@ -47,7 +50,9 @@ export function ruleIntent(text: string): Intent | null {
 
   // Recommendation asks — must run before the play-prefix rule so
   // "toca algo animado" doesn't become a literal search for "algo animado".
-  const rec = t.match(/^(?:recommend(?:s|ation)?|recomenda(?:r)?|sugere|sugest[aã]o|surprise me|me surpreende|dj)\b\s*(.*)$/i);
+  const rec = t.match(
+    /^(?:recommend(?:s|ation)?|recomenda(?:r)?|sugere|sugest[aã]o|surprise me|me surpreende|dj)\b\s*(.*)$/i,
+  );
   if (rec) return { action: 'recommend', query: rec[1] ?? '' };
   const recPlay = t.match(
     /^(?:play|toca(?:r)?|toque|bota|coloca|põe|poe)\s+(?:something|algo|alguma coisa|qualquer coisa|umas?|any)\b\s*(.*)$/i,
@@ -68,8 +73,19 @@ const INTENT_SCHEMA = {
     action: {
       type: 'string',
       enum: [
-        'play', 'recommend', 'skip', 'stop', 'pause', 'resume', 'queue',
-        'nowplaying', 'shuffle', 'volume_set', 'volume_up', 'volume_down', 'chat',
+        'play',
+        'recommend',
+        'skip',
+        'stop',
+        'pause',
+        'resume',
+        'queue',
+        'nowplaying',
+        'shuffle',
+        'volume_set',
+        'volume_up',
+        'volume_down',
+        'chat',
       ],
     },
     query: { type: 'string' },
@@ -97,8 +113,16 @@ const INTENT_SYSTEM =
   '"kkkk boa"→chat; "que horas são?"→chat; "alguém viu o jogo?"→chat.';
 
 const SIMPLE_ACTIONS = new Set([
-  'skip', 'stop', 'pause', 'resume', 'queue', 'nowplaying', 'shuffle',
-  'volume_up', 'volume_down', 'chat',
+  'skip',
+  'stop',
+  'pause',
+  'resume',
+  'queue',
+  'nowplaying',
+  'shuffle',
+  'volume_up',
+  'volume_down',
+  'chat',
 ]);
 
 function normalize(parsed: { action: Intent['action']; query?: string; volume?: number }): Intent {

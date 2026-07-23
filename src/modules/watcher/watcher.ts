@@ -1,4 +1,4 @@
-import { AttachmentBuilder, Client, EmbedBuilder } from 'discord.js';
+import { AttachmentBuilder, type Client, EmbedBuilder } from 'discord.js';
 import { config } from '../../config.js';
 import {
   allWatches,
@@ -19,9 +19,7 @@ export function fmt(price: number, currency: string | null): string {
 }
 
 export function startWatcher(client: Client): void {
-  console.log(
-    `[watcher] loop every 1 min; default per-watch interval ${config.checkIntervalMinutes} min`,
-  );
+  console.log(`[watcher] loop every 1 min; default per-watch interval ${config.checkIntervalMinutes} min`);
   // Guard against overlapping passes: one slow pass (many due watches × delay
   // × screenshots) must not race a second one into duplicate alerts.
   let running = false;
@@ -140,12 +138,7 @@ async function sendAlert(
   }
 }
 
-async function notifyFailure(
-  client: Client,
-  watch: Watch,
-  fails: number,
-  lastError: string,
-): Promise<void> {
+async function notifyFailure(client: Client, watch: Watch, fails: number, lastError: string): Promise<void> {
   const embed = new EmbedBuilder()
     .setTitle(`⚠️ Watch #${watch.id} keeps failing`)
     .setDescription(
