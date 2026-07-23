@@ -8,6 +8,8 @@ Stack: TypeScript, discord.js v14, `@discordjs/voice`, yt-dlp (via
 `youtube-dl-exec`), cheerio, `better-sqlite3`, puppeteer-core, and a local
 Ollama server. State lives in `data/bot.db` (SQLite).
 
+Design, diagrams, patterns, and trade-offs: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
 ## Features
 
 ### Music
