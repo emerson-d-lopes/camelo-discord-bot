@@ -1,6 +1,7 @@
 import { EmbedBuilder, MessageFlags, SlashCommandBuilder, TextChannel } from 'discord.js';
 import type { Command } from '../../commands.js';
 import { OLLAMA_MODEL, ollamaAvailable, ollamaChat } from '../../ollama.js';
+import { forgetChannel } from './converse.js';
 
 // Discord embeds cap at 4096 chars.
 const MAX_TOKENS = 1024;
@@ -129,4 +130,17 @@ const summarize: Command = {
   },
 };
 
-export const aiCommands: Command[] = [ask, summarize];
+const forget: Command = {
+  data: new SlashCommandBuilder()
+    .setName('forget')
+    .setDescription('Clear the bot’s conversation memory for this channel'),
+  async execute(interaction) {
+    const n = forgetChannel(interaction.channelId);
+    await interaction.reply({
+      content: n > 0 ? '🧹 Cleared this channel’s conversation memory.' : 'Nothing to forget here.',
+      flags: MessageFlags.Ephemeral,
+    });
+  },
+};
+
+export const aiCommands: Command[] = [ask, summarize, forget];

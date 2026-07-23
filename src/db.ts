@@ -50,6 +50,15 @@ db.exec(`
     welcome_message TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_conv_channel ON conversations(channel_id, id);
+
   CREATE TABLE IF NOT EXISTS play_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guild_id TEXT NOT NULL,
@@ -282,6 +291,40 @@ export function recentPlays(guildId: string, userId: string, limit = 15): string
     .prepare('SELECT DISTINCT title FROM play_history WHERE guild_id = ? ORDER BY id DESC LIMIT ?')
     .all(guildId, limit) as { title: string }[];
   return guild.map((r) => r.title);
+}
+
+// --- per-channel conversation memory (for the AI chat surface) ---
+
+// Kept until explicitly cleared, but capped so context stays fast and coherent.
+const MAX_CONV_TURNS = 24;
+
+export interface ConversationTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export function addConversationTurn(channelId: string, role: 'user' | 'assistant', content: string): void {
+  db.prepare('INSERT INTO conversations (channel_id, role, content) VALUES (?, ?, ?)').run(
+    channelId,
+    role,
+    content.slice(0, 2000),
+  );
+  db.prepare(
+    `DELETE FROM conversations WHERE channel_id = ? AND id NOT IN
+       (SELECT id FROM conversations WHERE channel_id = ? ORDER BY id DESC LIMIT ?)`,
+  ).run(channelId, channelId, MAX_CONV_TURNS);
+}
+
+export function getConversation(channelId: string, limit = MAX_CONV_TURNS): ConversationTurn[] {
+  return (
+    db
+      .prepare('SELECT role, content FROM conversations WHERE channel_id = ? ORDER BY id DESC LIMIT ?')
+      .all(channelId, limit) as ConversationTurn[]
+  ).reverse();
+}
+
+export function clearConversation(channelId: string): number {
+  return db.prepare('DELETE FROM conversations WHERE channel_id = ?').run(channelId).changes;
 }
 
 /** Row counts and on-disk size for monitoring. */

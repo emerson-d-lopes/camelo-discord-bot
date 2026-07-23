@@ -38,15 +38,29 @@ export function ollamaStats(): { inFlight: number; max: number } {
  * One-shot chat completion against local Ollama. `format` takes a JSON schema
  * for structured output. Throws on failure — callers decide the fallback.
  */
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export async function ollamaChat(
   system: string,
   user: string,
   opts: { format?: object; maxTokens?: number; timeoutMs?: number } = {},
 ): Promise<string> {
+  return ollamaChatMessages(system, [{ role: 'user', content: user }], opts);
+}
+
+/** Multi-turn chat — pass prior turns for conversational context. */
+export async function ollamaChatMessages(
+  system: string,
+  turns: ChatTurn[],
+  opts: { format?: object; maxTokens?: number; timeoutMs?: number } = {},
+): Promise<string> {
   if (inFlight >= MAX_CONCURRENT) throw new OllamaBusyError('Ollama is busy');
   inFlight++;
   try {
-    return await chatInner(system, user, opts);
+    return await chatInner(system, turns, opts);
   } finally {
     inFlight--;
   }
@@ -54,7 +68,7 @@ export async function ollamaChat(
 
 async function chatInner(
   system: string,
-  user: string,
+  turns: ChatTurn[],
   opts: { format?: object; maxTokens?: number; timeoutMs?: number } = {},
 ): Promise<string> {
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
@@ -63,13 +77,11 @@ async function chatInner(
     body: JSON.stringify({
       model: OLLAMA_MODEL,
       stream: false,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
+      messages: [{ role: 'system', content: system }, ...turns],
       ...(opts.format ? { format: opts.format } : {}),
       keep_alive: '30m',
-      options: { num_predict: opts.maxTokens ?? 512, temperature: 0 },
+      // Conversation wants a little variety; structured/intent calls stay at 0.
+      options: { num_predict: opts.maxTokens ?? 512, temperature: opts.format ? 0 : 0.6 },
     }),
     signal: AbortSignal.timeout(opts.timeoutMs ?? 60_000),
   });

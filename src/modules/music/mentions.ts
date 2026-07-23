@@ -1,6 +1,7 @@
 import { type Client, Events, GuildMember, type Message } from 'discord.js';
 import { getGuildSettings } from '../../db.js';
 import { rateAllow } from '../../security.js';
+import { converse, forgetChannel, isClearPhrase } from '../ai/converse.js';
 import {
   pauseAction,
   playAction,
@@ -19,7 +20,9 @@ import { recommendTracks } from './recommend.js';
  * Message interface: "@Camelô <anything>" anywhere, or ANY plain message in the
  * guild's designated music channel (/musicchannel set). Natural language works
  * — rule-based synonyms (EN + PT) first, then local Ollama intent
- * classification. Unclassifiable chat in the music channel is ignored.
+ * classification. Music intents play/control; anything else becomes a
+ * conversation (per-channel memory), so you can chat and discuss music with the
+ * bot, not only issue requests. Clear it with `/forget` or "forget it".
  */
 
 /**
@@ -72,6 +75,14 @@ async function handle(client: Client, message: Message): Promise<void> {
     return;
   }
 
+  // "forget it" / "esquece" clears memory — check before intent classification,
+  // since the model would otherwise read it as skip/stop.
+  if (isClearPhrase(text)) {
+    forgetChannel(message.channelId);
+    await reply(message, '🧹 Okay — I forgot our conversation in this channel.');
+    return;
+  }
+
   let intent = ruleIntent(text);
   if (!intent) {
     intent = await aiIntent(text);
@@ -82,20 +93,24 @@ async function handle(client: Client, message: Message): Promise<void> {
     intent = tagged ? { action: 'play', query: text } : { action: 'chat' };
   }
 
-  await execute(message, intent, tagged);
+  await execute(message, intent, tagged, text);
 }
 
-async function execute(message: Message, intent: Intent, tagged: boolean): Promise<void> {
+async function execute(message: Message, intent: Intent, tagged: boolean, text: string): Promise<void> {
   if (!message.guild) return;
   const session = getSession(message.guild.id);
   const userId = message.author.id;
 
   switch (intent.action) {
-    case 'chat':
-      // Not a music request — stay silent unless directly tagged.
-      if (tagged)
-        await reply(message, "That doesn't look like a music request — try a song name or `skip`/`stop`.");
+    case 'chat': {
+      // Not a music command → hold an actual conversation, with per-channel memory.
+      if ('sendTyping' in message.channel) await message.channel.sendTyping().catch(() => {});
+      const name = message.member?.displayName ?? message.author.displayName;
+      const answer = await converse(message.channelId, name, text);
+      if (answer) await reply(message, answer);
+      else if (tagged) await reply(message, 'My brain (Ollama) is offline right now.');
       return;
+    }
     case 'skip': {
       const channel = message.member instanceof GuildMember ? message.member.voice.channel : null;
       const listeners = channel ? channel.members.filter((m) => !m.user.bot).size : 1;
