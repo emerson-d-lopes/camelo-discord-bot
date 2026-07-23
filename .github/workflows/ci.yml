@@ -17,9 +17,11 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      # Lint/typecheck/tests need type declarations only — skip native builds
-      # and binary downloads (better-sqlite3, opus, yt-dlp).
+      # Skip native builds and binary downloads (opus, ffmpeg, yt-dlp) — lint
+      # and typecheck don't need them.
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm lint
       - run: pnpm typecheck
+      # Tests transitively import db.ts, so build just the SQLite native addon.
+      - run: pnpm rebuild better-sqlite3
       - run: pnpm test
