@@ -1,5 +1,5 @@
 import * as cheerio from 'cheerio';
-import { assertPublicHttpUrl, safeFetch } from '../../security.js';
+import { assertPublicHttpUrl, cappedText, safeFetch } from '../../security.js';
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -157,7 +157,12 @@ export async function scrapePrice(url: string, selector?: string | null): Promis
   }
   if (!res.ok) throw new ScrapeError(`Site returned HTTP ${res.status}.`);
 
-  const html = await res.text();
+  let html: string;
+  try {
+    html = await cappedText(res);
+  } catch {
+    throw new ScrapeError('That page is too large to scan.');
+  }
   const $ = cheerio.load(html);
 
   const title =

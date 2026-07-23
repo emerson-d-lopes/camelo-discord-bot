@@ -14,7 +14,7 @@ import type { Client, VoiceBasedChannel } from 'discord.js';
 import { PassThrough } from 'node:stream';
 import { youtubeDl } from 'youtube-dl-exec';
 import { loadMusicState, recordPlay, saveMusicState } from '../../db.js';
-import { isAllowedMediaUrl } from '../../security.js';
+import { cappedText, isAllowedMediaUrl } from '../../security.js';
 
 export interface Track {
   title: string;
@@ -234,6 +234,8 @@ export class MusicSession {
     if (!proc.stdout) {
       console.error('[music] yt-dlp spawned without stdout — skipping track');
       this.current = null;
+      this.persist();
+      // Don't stall — the playNext() finally-guard advances to the next track.
       return;
     }
     // Lookahead buffer: without it, backpressure throttles the download to
@@ -477,7 +479,7 @@ async function spotifyPlaylistTracks(url: string, requestedBy: string): Promise<
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`Spotify returned HTTP ${res.status}.`);
-  const html = await res.text();
+  const html = await cappedText(res);
   const json = html.match(
     /<script id="__NEXT_DATA__" type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
   )?.[1];

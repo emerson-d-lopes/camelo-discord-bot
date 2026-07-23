@@ -1,5 +1,7 @@
 import { lookup } from 'node:dns/promises';
+import { lookup as dnsLookup } from 'node:dns';
 import { isIP } from 'node:net';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 // --- rate limiting (token bucket per key) ---
 
@@ -120,16 +122,64 @@ export async function assertPublicHttpUrl(raw: string): Promise<void> {
   }
 }
 
+// Validating dispatcher: undici calls this lookup to resolve the socket
+// address, so the address we validate is the exact one it connects to — this
+// closes the DNS-rebinding TOCTOU where a hostname resolves public at
+// check-time and private at connect-time. TLS servername stays the hostname,
+// so certificate validation is unaffected.
+const guardedAgent = new Agent({
+  connect: {
+    lookup(hostname, options, callback) {
+      dnsLookup(hostname, options, (err, address, family) => {
+        if (err) return callback(err, address as string, family as number);
+        const addrs = Array.isArray(address)
+          ? (address as unknown as { address: string; family: number }[])
+          : [{ address: address as string, family: family as number }];
+        if (addrs.some((a) => isPrivateIp(a.address))) {
+          return callback(new Error('blocked: resolves to a private address'), '', 0);
+        }
+        callback(null, address as string, family as number);
+      });
+    },
+  },
+});
+
+const MAX_BODY_BYTES = 8 * 1024 * 1024;
+
+/** Read a response body with a hard byte cap so a hostile server can't OOM us. */
+export async function cappedText(res: Response, maxBytes = MAX_BODY_BYTES): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error('Response too large.');
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
 /**
- * fetch() that re-validates every redirect hop against the SSRF guard, so a
- * public URL cannot bounce to an internal address. Caps hops and rejects
- * non-standard protocols/ports on each step.
+ * fetch() that pins the validated IP at connect time (via guardedAgent) and
+ * re-validates every redirect hop against the SSRF guard. A public URL cannot
+ * bounce — or DNS-rebind — to an internal address.
  */
 export async function safeFetch(url: string, init: RequestInit = {}, maxHops = 5): Promise<Response> {
   let current = url;
   for (let hop = 0; hop <= maxHops; hop++) {
     await assertPublicHttpUrl(current);
-    const res = await fetch(current, { ...init, redirect: 'manual' });
+    // undici's own fetch — the dispatcher must come from the same undici copy.
+    const res = (await undiciFetch(current, {
+      ...(init as Parameters<typeof undiciFetch>[1]),
+      redirect: 'manual',
+      dispatcher: guardedAgent,
+    })) as unknown as Response;
     if (res.status < 300 || res.status >= 400) return res;
     const location = res.headers.get('location');
     if (!location) return res;

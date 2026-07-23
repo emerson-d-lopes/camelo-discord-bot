@@ -21,11 +21,18 @@ export function parseDuration(input: string): number | null {
 }
 
 export function startReminders(client: Client): void {
+  // Overlap guard: a slow pass (many closed-DM fetches) must not let the next
+  // tick start and double-deliver.
+  let running = false;
   setInterval(async () => {
+    if (running) return;
+    running = true;
     try {
       await deliverDue(client);
     } catch (err) {
       console.error('[reminders] pass failed:', err);
+    } finally {
+      running = false;
     }
   }, 30_000);
 }

@@ -12,9 +12,13 @@ import { recommendTracks } from './recommend.js';
  * classification. Unclassifiable chat in the music channel is ignored.
  */
 
-/** Reply that never rejects — a failed reply (deleted msg, missing perms) must not crash the process. */
+/**
+ * Reply that never rejects and never pings anyone — track titles are untrusted
+ * (a song literally titled `<@id>` would otherwise ping that user), and the
+ * music handler has no reason to mention anybody.
+ */
 function reply(message: Message, content: string): Promise<unknown> {
-  return message.reply(content).catch((err) => {
+  return message.reply({ content, allowedMentions: { parse: [] } }).catch((err) => {
     console.warn('[music] reply failed:', err instanceof Error ? err.message : err);
   });
 }
@@ -57,9 +61,9 @@ async function handle(client: Client, message: Message): Promise<void> {
     intent = await aiIntent(text);
   }
   if (!intent) {
-    // No AI available: tagged messages default to a play request; bare music
-    // channel chatter is left alone unless it plausibly names a song.
-    intent = tagged ? { action: 'play', query: text } : { action: 'play', query: text };
+    // No classifier available: a direct tag is a play request; unclassifiable
+    // chatter in the music channel is left alone rather than fed to yt-dlp.
+    intent = tagged ? { action: 'play', query: text } : { action: 'chat' };
   }
 
   await execute(message, intent, tagged);

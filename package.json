@@ -22,6 +22,7 @@
     "ffmpeg-static": "^5.2.0",
     "libsodium-wrappers": "^0.7.15",
     "puppeteer-core": "^25.3.0",
+    "undici": "^8.8.0",
     "youtube-dl-exec": "^3.0.10"
   },
   "devDependencies": {

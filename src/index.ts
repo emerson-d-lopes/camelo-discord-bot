@@ -39,7 +39,7 @@ startMentionCommands(client);
 
 // Commands that spawn processes or hit the network/LLM get a tighter per-user
 // cap on top of any command-specific cooldown.
-const EXPENSIVE = new Set(['play', 'watch', 'price', 'history', 'ask', 'summarize']);
+const EXPENSIVE = new Set(['play', 'watch', 'price', 'history', 'ask', 'summarize', 'lyrics']);
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;

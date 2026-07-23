@@ -96,12 +96,19 @@ const INTENT_SYSTEM =
   '"toca algo pra sexta à noite"→recommend "sexta à noite"; ' +
   '"kkkk boa"→chat; "que horas são?"→chat; "alguém viu o jogo?"→chat.';
 
+const SIMPLE_ACTIONS = new Set([
+  'skip', 'stop', 'pause', 'resume', 'queue', 'nowplaying', 'shuffle',
+  'volume_up', 'volume_down', 'chat',
+]);
+
 function normalize(parsed: { action: Intent['action']; query?: string; volume?: number }): Intent {
   if (parsed.action === 'play') {
     return parsed.query ? { action: 'play', query: parsed.query } : { action: 'chat' };
   }
   if (parsed.action === 'recommend') return { action: 'recommend', query: parsed.query ?? '' };
   if (parsed.action === 'volume_set') return { action: 'volume_set', volume: parsed.volume ?? 100 };
+  // An action outside the known set (a model that ignored the schema) → do nothing.
+  if (!SIMPLE_ACTIONS.has(parsed.action)) return { action: 'chat' };
   return { action: parsed.action };
 }
 

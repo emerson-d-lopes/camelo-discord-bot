@@ -66,18 +66,22 @@ const play: Command = {
     const first = tracks[0];
     const restoredNote =
       wasIdle && restoredCount > 0 ? ` (restored ${restoredCount} queued from last run)` : '';
+    // parse:[] — an untrusted track title must never resolve into a ping.
+    const noPing = { allowedMentions: { parse: [] as const } };
     if (tracks.length > 1) {
-      await interaction.editReply(
-        `➕ Queued **${tracks.length}** tracks from playlist/mix — ${
+      await interaction.editReply({
+        content: `➕ Queued **${tracks.length}** tracks from playlist/mix — ${
           wasIdle ? 'starting with' : 'first up'
         }: **${first.title}** (${first.duration})${restoredNote}`,
-      );
+        ...noPing,
+      });
     } else {
-      await interaction.editReply(
-        wasIdle
+      await interaction.editReply({
+        content: wasIdle
           ? `▶️ Now playing: **${first.title}** (${first.duration})${restoredNote}`
           : `➕ Queued: **${first.title}** (${first.duration}) — position ${session.queue.length}`,
-      );
+        ...noPing,
+      });
     }
   },
 };
