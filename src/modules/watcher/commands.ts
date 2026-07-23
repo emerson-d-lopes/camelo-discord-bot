@@ -6,6 +6,7 @@ import {
   insertWatch,
   listWatches,
   priceHistory,
+  totalWatches,
   touchWatch,
   updateWatchPrice,
 } from '../../db.js';
@@ -81,6 +82,16 @@ const watch: Command = {
     if (listWatches(interaction.user.id).length >= 10) {
       await interaction.reply({
         content: 'Watch limit reached (10 per user) — remove one with `/unwatch` first.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
+    // Process-wide ceiling: each watch is recurring fetch + scrape + screenshot
+    // work, so cap the total regardless of how many users spread it across.
+    if (totalWatches() >= 2000) {
+      await interaction.reply({
+        content: 'The bot is at its global watch capacity right now — try again later.',
         flags: MessageFlags.Ephemeral,
       });
       return;

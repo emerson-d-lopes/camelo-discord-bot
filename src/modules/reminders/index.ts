@@ -1,6 +1,13 @@
 import { type Client, EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import type { Command } from '../../commands.js';
-import { deleteReminder, dueReminders, getReminder, insertReminder, listReminders } from '../../db.js';
+import {
+  deleteReminder,
+  dueReminders,
+  getReminder,
+  insertReminder,
+  listReminders,
+  totalReminders,
+} from '../../db.js';
 
 /** Parse "2h30m", "45m", "1d2h", "90s" into ms. */
 export function parseDuration(input: string): number | null {
@@ -81,6 +88,13 @@ const remind: Command = {
     if (listReminders(interaction.user.id).length >= 25) {
       await interaction.reply({
         content: 'Reminder limit reached (25 per user) — cancel one with `/unremind` first.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    if (totalReminders() >= 5000) {
+      await interaction.reply({
+        content: 'The bot is at its global reminder capacity right now — try again later.',
         flags: MessageFlags.Ephemeral,
       });
       return;

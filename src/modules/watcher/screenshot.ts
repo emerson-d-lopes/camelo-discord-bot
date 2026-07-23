@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { assertPublicHttpUrl, hostIsPrivate } from '../../security.js';
+import { assertPublicHttpUrl } from '../../security.js';
+import { startGuardedProxy } from './guardedProxy.js';
 
 const CHROME_PATHS = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
@@ -7,9 +8,22 @@ const CHROME_PATHS = [
   `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
 ];
 
+// One screenshot at a time across the whole process. The watcher loop is
+// already serial, but this hard-caps concurrency even if that changes, so a
+// burst of due watches can't launch a swarm of Chrome processes.
+let inFlight = 0;
+const MAX_CONCURRENT = 1;
+
 /**
  * Screenshot a product page with the locally installed Chrome (headless).
  * Returns null on any failure — alerts still go out without the image.
+ *
+ * SSRF: the entry URL is validated up front, then all browser traffic is forced
+ * through a loopback proxy that pins every connection (navigation, redirects,
+ * sub-resources) to a validated public IP. Chrome does its own DNS resolution,
+ * so pinning at the proxy is what actually closes the rebinding TOCTOU that a
+ * re-resolving request interceptor cannot. `<-loopback>` denies the implicit
+ * localhost bypass so a hostile page can't sidestep the proxy.
  */
 export async function screenshotPage(url: string): Promise<Buffer | null> {
   try {
@@ -19,32 +33,31 @@ export async function screenshotPage(url: string): Promise<Buffer | null> {
   }
   const executablePath = CHROME_PATHS.find((p) => existsSync(p));
   if (!executablePath) return null;
+  if (inFlight >= MAX_CONCURRENT) return null;
+  inFlight++;
 
   let browser;
+  let proxy;
   try {
+    proxy = await startGuardedProxy();
     const { launch } = await import('puppeteer-core');
     browser = await launch({
       executablePath,
       headless: true,
-      args: ['--no-first-run', '--disable-extensions', '--mute-audio'],
+      args: [
+        '--no-first-run',
+        '--disable-extensions',
+        '--mute-audio',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        `--proxy-server=http://127.0.0.1:${proxy.port}`,
+        '--proxy-bypass-list=<-loopback>',
+      ],
     });
     const page = await browser.newPage();
-    // Disable JS so a hostile page can't script LAN requests from the renderer,
-    // and intercept every request to block any that resolve to a private host
-    // (covers redirects and sub-resources the Node-side guard never sees).
+    // JS off: a hostile page can't script requests, and the guarded proxy vets
+    // every network call the renderer still makes.
     await page.setJavaScriptEnabled(false);
-    await page.setRequestInterception(true);
-    page.on('request', (req) => {
-      void (async () => {
-        try {
-          const host = new URL(req.url()).hostname;
-          if (await hostIsPrivate(host)) await req.abort();
-          else await req.continue();
-        } catch {
-          await req.abort().catch(() => {});
-        }
-      })();
-    });
     await page.setViewport({ width: 1280, height: 800 });
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25_000 });
     await new Promise((r) => setTimeout(r, 1_000));
@@ -55,5 +68,7 @@ export async function screenshotPage(url: string): Promise<Buffer | null> {
     return null;
   } finally {
     await browser?.close().catch(() => {});
+    await proxy?.close().catch(() => {});
+    inFlight--;
   }
 }

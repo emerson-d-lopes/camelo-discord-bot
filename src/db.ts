@@ -89,6 +89,9 @@ const settingsCols = (db.prepare(`PRAGMA table_info(guild_settings)`).all() as {
 if (!settingsCols.includes('music_channel_id')) {
   db.exec(`ALTER TABLE guild_settings ADD COLUMN music_channel_id TEXT`);
 }
+if (!settingsCols.includes('chat_channel_id')) {
+  db.exec(`ALTER TABLE guild_settings ADD COLUMN chat_channel_id TEXT`);
+}
 
 export interface Watch {
   id: number;
@@ -125,6 +128,11 @@ export function listWatches(userId: string): Watch[] {
 
 export function allWatches(): Watch[] {
   return db.prepare('SELECT * FROM watches ORDER BY id').all() as Watch[];
+}
+
+/** Total watches across every user — for a process-wide abuse ceiling. */
+export function totalWatches(): number {
+  return (db.prepare('SELECT COUNT(*) AS c FROM watches').get() as { c: number }).c;
 }
 
 export function getWatch(id: number): Watch | undefined {
@@ -231,6 +239,11 @@ export function listReminders(userId: string): Reminder[] {
   return db.prepare('SELECT * FROM reminders WHERE user_id = ? ORDER BY due_at').all(userId) as Reminder[];
 }
 
+/** Total reminders across every user — for a process-wide abuse ceiling. */
+export function totalReminders(): number {
+  return (db.prepare('SELECT COUNT(*) AS c FROM reminders').get() as { c: number }).c;
+}
+
 export function getReminder(id: number): Reminder | undefined {
   return db.prepare('SELECT * FROM reminders WHERE id = ?').get(id) as Reminder | undefined;
 }
@@ -246,6 +259,7 @@ export interface GuildSettings {
   welcome_channel_id: string | null;
   welcome_message: string | null;
   music_channel_id: string | null;
+  chat_channel_id: string | null;
 }
 
 export function getGuildSettings(guildId: string): GuildSettings | undefined {
@@ -360,5 +374,12 @@ export function setMusicChannel(guildId: string, channelId: string | null): void
   db.prepare(
     `INSERT INTO guild_settings (guild_id, music_channel_id) VALUES (?, ?)
      ON CONFLICT(guild_id) DO UPDATE SET music_channel_id = excluded.music_channel_id`,
+  ).run(guildId, channelId);
+}
+
+export function setChatChannel(guildId: string, channelId: string | null): void {
+  db.prepare(
+    `INSERT INTO guild_settings (guild_id, chat_channel_id) VALUES (?, ?)
+     ON CONFLICT(guild_id) DO UPDATE SET chat_channel_id = excluded.chat_channel_id`,
   ).run(guildId, channelId);
 }

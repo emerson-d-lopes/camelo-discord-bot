@@ -2,6 +2,7 @@ import { type Client, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } f
 import type { Command } from '../../commands.js';
 import { dbStats } from '../../db.js';
 import { ollamaStats } from '../../ollama.js';
+import { ssrfBlockCount } from '../../security.js';
 import { musicStats } from '../music/player.js';
 
 const OWNER_ID = process.env.OWNER_ID;
@@ -48,6 +49,7 @@ export interface MetricsSnapshot {
   uptimeSec: number;
   cpuPercent: number;
   guilds: number;
+  ssrfBlocks: number;
   memory: { rss: number; heapUsed: number; heapTotal: number; buffers: number };
   music: ReturnType<typeof musicStats>;
   ollama: ReturnType<typeof ollamaStats>;
@@ -67,6 +69,7 @@ export function metricsSnapshot(guilds: number): MetricsSnapshot {
     uptimeSec: Math.round(process.uptime()),
     cpuPercent: Number(cpuPercent.toFixed(1)),
     guilds,
+    ssrfBlocks: ssrfBlockCount(),
     memory: {
       rss: s.mem.rss,
       heapUsed: s.mem.heapUsed,
@@ -97,6 +100,7 @@ export function prometheusText(m: MetricsSnapshot): string {
     `camelo_watches ${m.db.watches}`,
     `camelo_reminders ${m.db.reminders}`,
     `camelo_play_history_rows ${m.db.playHistory}`,
+    `camelo_ssrf_blocks ${m.ssrfBlocks}`,
   ];
   return `${lines.join('\n')}\n`;
 }
@@ -166,6 +170,11 @@ const stats: Command = {
         {
           name: 'Servers',
           value: `${interaction.client.guilds.cache.size} guild(s)`,
+          inline: true,
+        },
+        {
+          name: 'Security',
+          value: `SSRF blocks: ${ssrfBlockCount()}`,
           inline: true,
         },
       )

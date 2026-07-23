@@ -87,18 +87,27 @@ function isPrivateIp(addr: string): boolean {
   return false;
 }
 
+/** Hostname that names this machine or the local network without needing DNS. */
+function isLocalhostName(host: string): boolean {
+  return (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal') ||
+    host.endsWith('.home.arpa')
+  );
+}
+
+// How many requests the SSRF guard has refused, for monitoring / alerting.
+let ssrfBlocks = 0;
+export function ssrfBlockCount(): number {
+  return ssrfBlocks;
+}
+
 /** True if a hostname is localhost-style or resolves to a private address. */
 export async function hostIsPrivate(host: string): Promise<boolean> {
   const h = host.toLowerCase().replace(/^\[|\]$/g, '');
-  if (
-    h === 'localhost' ||
-    h.endsWith('.localhost') ||
-    h.endsWith('.local') ||
-    h.endsWith('.internal') ||
-    h.endsWith('.home.arpa')
-  ) {
-    return true;
-  }
+  if (isLocalhostName(h)) return true;
   if (isIP(h)) return isPrivateIp(h);
   try {
     const addrs = await lookup(h, { all: true });
@@ -125,17 +134,15 @@ export async function assertPublicHttpUrl(raw: string): Promise<void> {
   if (u.username || u.password) throw new Error('URLs with credentials are not allowed.');
 
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (
-    host === 'localhost' ||
-    host.endsWith('.localhost') ||
-    host.endsWith('.local') ||
-    host.endsWith('.internal') ||
-    host.endsWith('.home.arpa')
-  ) {
+  if (isLocalhostName(host)) {
+    ssrfBlocks++;
     throw new Error('Local addresses are not allowed.');
   }
   if (isIP(host)) {
-    if (isPrivateIp(host)) throw new Error('Private addresses are not allowed.');
+    if (isPrivateIp(host)) {
+      ssrfBlocks++;
+      throw new Error('Private addresses are not allowed.');
+    }
     return;
   }
   let addrs;
@@ -145,8 +152,50 @@ export async function assertPublicHttpUrl(raw: string): Promise<void> {
     throw new Error('Could not resolve that hostname.');
   }
   if (addrs.length === 0 || addrs.some((a) => isPrivateIp(a.address))) {
+    ssrfBlocks++;
     throw new Error('That URL resolves to a private address.');
   }
+}
+
+/**
+ * Validate a host:port pair for the screenshot proxy and return the exact IP to
+ * connect to. Same policy as {@link assertPublicHttpUrl} — http(s) ports only,
+ * no localhost-style names, no private/loopback/link-local addresses — but it
+ * returns a pinned address so the proxy connects to the *validated* IP rather
+ * than re-resolving (which would reopen the DNS-rebinding TOCTOU). Throws if the
+ * host is not a safe public destination.
+ */
+export async function pinPublicHost(
+  host: string,
+  port: number,
+): Promise<{ address: string; family: number }> {
+  if (port !== 80 && port !== 443) {
+    ssrfBlocks++;
+    throw new Error('Non-standard ports are not allowed.');
+  }
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '');
+  if (isLocalhostName(h)) {
+    ssrfBlocks++;
+    throw new Error('Local addresses are not allowed.');
+  }
+  if (isIP(h)) {
+    if (isPrivateIp(h)) {
+      ssrfBlocks++;
+      throw new Error('Private addresses are not allowed.');
+    }
+    return { address: h, family: isIP(h) };
+  }
+  let addrs;
+  try {
+    addrs = await lookup(h, { all: true });
+  } catch {
+    throw new Error('Could not resolve that hostname.');
+  }
+  if (addrs.length === 0 || addrs.some((a) => isPrivateIp(a.address))) {
+    ssrfBlocks++;
+    throw new Error('That host resolves to a private address.');
+  }
+  return { address: addrs[0].address, family: addrs[0].family };
 }
 
 // Validating dispatcher: undici calls this lookup to resolve the socket

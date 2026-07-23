@@ -238,6 +238,9 @@ export class MusicSession {
         quiet: true,
         noPlaylist: true,
         noWarnings: true,
+        // Ignore any on-disk yt-dlp config so behaviour can't be altered by a
+        // file dropped in the home dir / cwd.
+        ignoreConfig: true,
       },
       { stdio: ['ignore', 'pipe', 'ignore'] },
     );
@@ -573,6 +576,7 @@ export async function resolveTracks(query: string, requestedBy: string): Promise
       skipDownload: true,
       quiet: true,
       noWarnings: true,
+      ignoreConfig: true,
       ...(isPlaylist ? { yesPlaylist: true, playlistEnd: PLAYLIST_MAX } : { noPlaylist: true }),
     }),
   );
