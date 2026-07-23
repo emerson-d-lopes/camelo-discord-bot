@@ -29,6 +29,10 @@ const sessions = new Map<string, MusicSession>();
 
 const IDLE_LEAVE_MINUTES = 5;
 const RECENT_AUTOPLAY_MEMORY = 50;
+// Radio: top the queue up to TARGET related tracks whenever it drops below MIN,
+// so playback never runs dry while people are listening.
+const AUTOPLAY_MIN = 2;
+const AUTOPLAY_TARGET = 5;
 
 // Cap concurrent yt-dlp resolve/metadata spawns across all guilds so a /play
 // flood can't fork unbounded processes.
@@ -49,8 +53,9 @@ export class MusicSession {
   readonly queue: Track[] = [];
   current: Track | null = null;
   loopMode: LoopMode = 'off';
-  autoplay = false;
+  autoplay = true; // radio by default — one song seeds a continuous queue
   volume = 1;
+  private lastTrack: Track | null = null;
   skipVotes = new Set<string>();
   private skipRequested = false;
   private advancing = false;
@@ -83,7 +88,8 @@ export class MusicSession {
         // corrupted state — start clean
       }
       if (saved.loop_mode === 'track' || saved.loop_mode === 'queue') this.loopMode = saved.loop_mode;
-      this.autoplay = saved.autoplay === 1;
+      // autoplay is not restored — radio-on is the per-session default; a stale
+      // saved value shouldn't silence the bot after a restart.
     }
 
     this.player.on(AudioPlayerStatus.Idle, () => void this.playNext());
@@ -117,24 +123,30 @@ export class MusicSession {
   }
 
   private async housekeepInner(): Promise<void> {
-    let alone = false;
+    let alone = true; // if we can't tell, assume no one is listening
     try {
       const channel = await this.client.channels.fetch(this.channelId);
       if (channel?.isVoiceBased()) {
         alone = channel.members.filter((m) => !m.user.bot).size === 0;
       }
     } catch {
-      // channel fetch failed — don't count it against the timer
+      // channel fetch failed — treat as alone so we don't camp forever
     }
-    const idle = this.current === null && this.queue.length === 0;
-    if (idle || alone) {
+
+    // Leave only when the channel is empty. While people are present, keep the
+    // music going — never sit idle.
+    if (alone) {
       this.idleMinutes++;
       if (this.idleMinutes >= IDLE_LEAVE_MINUTES) {
-        console.log(`[music] auto-leaving guild ${this.guildId} (${alone ? 'alone' : 'idle'})`);
+        console.log(`[music] auto-leaving empty channel in guild ${this.guildId}`);
         this.destroy();
       }
-    } else {
-      this.idleMinutes = 0;
+      return;
+    }
+    this.idleMinutes = 0;
+    if (this.current === null) {
+      if (this.queue.length > 0) void this.playNext();
+      else void this.topUp(); // radio ran dry with people here — revive it
     }
   }
 
@@ -205,6 +217,7 @@ export class MusicSession {
       return;
     }
     this.current = next;
+    this.lastTrack = next;
     this.rememberUrl(next.url);
     this.persist();
     if (!repeatTrack) {
@@ -214,6 +227,8 @@ export class MusicSession {
         console.warn('[music] history record failed:', err);
       }
     }
+    // Fill the radio buffer ahead of time so the queue never runs dry mid-song.
+    void this.topUp();
 
     const proc = youtubeDl.exec(
       next.url,
@@ -262,20 +277,41 @@ export class MusicSession {
     if (this.recentUrls.length > RECENT_AUTOPLAY_MEMORY) this.recentUrls.shift();
   }
 
-  /** Pull a related track from the YouTube mix of the song that just finished. */
-  private async fetchAutoplayTrack(last: Track): Promise<Track | undefined> {
-    if (this.resolvingAutoplay) return undefined;
+  /** Related tracks from the YouTube mix of a seed song, skipping recently-played ones. */
+  private async fetchAutoplayTracks(seed: Track, want: number): Promise<Track[]> {
+    const videoId = seed.url.match(/[?&]v=([\w-]{5,})/)?.[1] ?? seed.url.match(/youtu\.be\/([\w-]{5,})/)?.[1];
+    if (!videoId) return [];
+    const mixUrl = `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`;
+    const tracks = await resolveTracks(mixUrl, seed.requestedBy);
+    const queued = new Set(this.queue.map((t) => t.url));
+    return tracks.filter((t) => !this.recentUrls.includes(t.url) && !queued.has(t.url)).slice(0, want);
+  }
+
+  private async fetchAutoplayTrack(seed: Track): Promise<Track | undefined> {
+    return (await this.fetchAutoplayTracks(seed, 1))[0];
+  }
+
+  /**
+   * Radio top-up: when autoplay is on and the queue is running low, append
+   * related tracks so playback stays continuous. Seeds from the current (or
+   * last-played) song.
+   */
+  private async topUp(): Promise<void> {
+    if (!this.autoplay || this.resolvingAutoplay) return;
+    if (this.queue.length >= AUTOPLAY_MIN) return;
+    const seed = this.current ?? this.lastTrack;
+    if (!seed) return;
     this.resolvingAutoplay = true;
     try {
-      const videoId =
-        last.url.match(/[?&]v=([\w-]{5,})/)?.[1] ?? last.url.match(/youtu\.be\/([\w-]{5,})/)?.[1];
-      if (!videoId) return undefined;
-      const mixUrl = `https://www.youtube.com/watch?v=${videoId}&list=RD${videoId}`;
-      const tracks = await resolveTracks(mixUrl, last.requestedBy);
-      return tracks.find((t) => !this.recentUrls.includes(t.url));
+      const picks = await this.fetchAutoplayTracks(seed, AUTOPLAY_TARGET - this.queue.length);
+      if (picks.length) {
+        this.queue.push(...picks);
+        this.persist();
+        // If nothing is playing (radio had gone quiet), start it.
+        if (this.current === null) void this.playNext();
+      }
     } catch (err) {
-      console.warn('[music] autoplay fetch failed:', err instanceof Error ? err.message : err);
-      return undefined;
+      console.warn('[music] radio top-up failed:', err instanceof Error ? err.message : err);
     } finally {
       this.resolvingAutoplay = false;
     }

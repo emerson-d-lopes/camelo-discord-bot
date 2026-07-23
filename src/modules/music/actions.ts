@@ -143,9 +143,11 @@ export async function playAction(
       }: **${first.title}** (${first.duration})${restoredNote}`,
     };
   }
+  // Single track + radio: the queue auto-fills with similar songs.
+  const radioNote = session.autoplay ? ' · 🔀 radio on — I’ll keep similar songs coming' : '';
   return {
     text: wasIdle
-      ? `▶️ Now playing: **${first.title}** (${first.duration})${restoredNote}`
+      ? `▶️ Now playing: **${first.title}** (${first.duration})${restoredNote}${radioNote}`
       : `➕ Queued: **${first.title}** (${first.duration}) — position ${session.queue.length}`,
   };
 }
