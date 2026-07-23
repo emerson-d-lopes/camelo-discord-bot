@@ -8,8 +8,6 @@ Stack: TypeScript, discord.js v14, `@discordjs/voice`, yt-dlp (via
 `youtube-dl-exec`), cheerio, `better-sqlite3`, puppeteer-core, and a local
 Ollama server. State lives in `data/bot.db` (SQLite).
 
-Design, diagrams, patterns, and trade-offs: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
-
 ## Features
 
 ### Music
@@ -51,6 +49,162 @@ screenshot with each alert (channel + DM).
 
 `/remind`, `/reminders`, `/unremind`, `/poll`, `/roll`, `/welcome`,
 `/ask`, `/summarize` (the last two via local Ollama).
+
+## Architecture
+
+Single Node process, `tsx` runtime. The gateway client is the one entry point;
+two event paths (slash interactions and plain messages) fan into feature
+modules, which lean on a thin shared-infrastructure layer. Nothing listens on an
+inbound port — all input arrives through the Discord socket, which shapes the
+whole security model.
+
+```mermaid
+flowchart TB
+  users([Discord users]) --> gw[[Discord Gateway]]
+
+  subgraph core["core · index.ts"]
+    router{event router}
+    rl["rate-limit guard<br/>token buckets"]
+    disp["command dispatch<br/>registry.ts"]
+    msg["message handler<br/>mentions.ts"]
+    router -->|InteractionCreate| rl --> disp
+    router -->|MessageCreate| msg
+  end
+  gw --> router
+
+  subgraph mods["feature modules"]
+    music[/music/]
+    watch[/watcher/]
+    rem[/reminders/]
+    fun[/fun/]
+    wel[/welcome/]
+    ai[/ai/]
+  end
+  disp --> music & watch & rem & fun & wel & ai
+  msg -->|intent| music
+
+  subgraph infra["shared infrastructure"]
+    sec["security.ts<br/>SSRF · allowlist · limits"]
+    oll["ollama.ts<br/>local LLM client"]
+    db["db.ts<br/>SQLite access"]
+  end
+  music --> sec & oll & db
+  watch --> sec & db
+  rem --> db
+  wel --> db
+  ai --> oll
+
+  subgraph out["external services"]
+    yt(["YouTube · yt-dlp subprocess"])
+    sp(["Spotify embed"])
+    shop(["retail pages · cheerio + headless Chrome"])
+    olls(["Ollama server · 127.0.0.1"])
+  end
+  music --> yt & sp
+  watch --> shop
+  oll --> olls
+```
+
+Dependencies point downward only — modules use infrastructure, never the
+reverse, and modules don't import each other.
+
+| Layer | Files | Responsibility |
+|---|---|---|
+| **entry** | `index.ts`, `registry.ts` | Gateway client, event routing, rate-limit gate, command map, loop startup. |
+| **modules** | `modules/*` | Self-contained features, each owning its commands and logic. |
+| **infrastructure** | `security`, `ollama`, `db`, `config` | Cross-cutting: URL safety & rate limits, the local-LLM client, SQLite, environment. |
+| **contracts** | `commands.ts` | The `Command` interface every command implements. |
+
+### Request flows
+
+The same features are reachable two ways. A slash command is explicit and
+validated by Discord; a plain message in the designated music channel is
+interpreted locally. Both converge on the one `MusicSession` per guild.
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant I as index.ts
+  participant C as /play
+  participant P as MusicSession
+  U->>I: /play query (InteractionCreate)
+  I->>I: rate-limit check
+  I->>C: execute()
+  C->>U: deferReply()
+  C->>C: resolveTracks() · SSRF + allowlist + yt-dlp slot
+  C->>P: enqueue()
+  P->>U: audio to voice
+  C->>U: editReply(embed)
+```
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant M as mentions.ts
+  participant R as rules
+  participant O as Ollama
+  participant P as MusicSession
+  U->>M: "toca algo pra relaxar"
+  M->>M: rate-limit check
+  M->>R: ruleIntent()
+  R-->>M: no match
+  M->>O: aiIntent()
+  O-->>M: {recommend, mood}
+  M->>P: enqueue() · history + time to 3-5 picks
+  P->>U: reply + audio
+```
+
+### Playback state machine
+
+`MusicSession` is the one stateful object of note. An `advancing` flag
+serialises track transitions so overlapping triggers — the idle event, a player
+error, and a fresh enqueue during an autoplay fetch — can't fork two download
+processes. Queue, loop mode, and volume are written through to SQLite on every
+change, so a restart rejoins mid-queue.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Idle: join / restore queue
+  Idle --> Playing: enqueue()
+  Playing --> Playing: track ends → advance()
+  Playing --> Idle: queue empty (autoplay off)
+  Playing --> Playing: autoplay → related track
+  Playing --> Idle: skip / pause boundary
+  Idle --> Destroyed: 5 min alone or empty
+  Playing --> Destroyed: stop()
+  Destroyed --> [*]: leave · persist state
+```
+
+### Patterns
+
+Each earns its place by removing a specific failure mode or duplication.
+
+| Pattern | Where | Why |
+|---|---|---|
+| **Command + Registry** | `commands.ts`, `registry.ts` | Commands are `{ data, execute }`; one registry feeds both the dispatcher and the deploy script, so they can't drift. |
+| **Fallback pipeline** | `music/intent.ts` | Intent resolves rules → local LLM → default; the model only runs on what the rules miss. |
+| **Strategy (detection)** | `watcher/scraper.ts` | Price via selector → JSON-LD → meta → CSS heuristic → Mercado Livre API; first hit wins. |
+| **Producer–consumer buffer** | `music/player.ts` | A 32 MB `PassThrough` between yt-dlp and the encoder keeps jitter from stuttering playback. |
+| **Semaphores & a mutex** | `player.ts`, `ollama.ts` | The `advancing` flag serialises advance; global caps bound concurrent yt-dlp and LLM calls. |
+| **Token-bucket limits** | `security.ts` | Per-user and per-guild buckets, tighter for heavy commands; stale buckets pruned hourly. |
+| **SSRF guard + allowlist** | `security.ts` | User URLs re-validated per redirect hop and IP-pinned at connect; `/play` links host-allowlisted. |
+| **Write-through + restore** | `player.ts`, `db.ts` | Session state persists on change and reloads on boot — the queue survives a restart. |
+| **Graceful degradation** | `ai`, `watcher` | No Ollama → AI off; no Chrome → alerts drop the screenshot. A missing capability never crashes the bot. |
+| **Schema-constrained LLM** | `intent.ts`, `recommend.ts` | The model answers in a fixed JSON schema with an action enum — injected text can't change what the bot does. |
+| **Lazy resolution** | `recommend.ts`, `player.ts` | Spotify/DJ picks queue as `ytsearch1:` placeholders, resolved only when the track comes up. |
+| **Guarded polling loops** | `watcher`, `reminders` | Interval loops carry a re-entrancy guard and try/catch, so a slow pass can't overlap or kill the timer. |
+
+### Choices & trade-offs
+
+| Decision | Why | Trade-off |
+|---|---|---|
+| **better-sqlite3** over Postgres | One file, zero ops, synchronous. | Blocks the event loop per query (negligible here); single writer. |
+| **Local Ollama** over a cloud LLM | Private, free, offline, no keys. | Smaller model; needs a local server running. |
+| **yt-dlp subprocess** over pure-JS | Tracks YouTube changes upstream; `pnpm update` fixes breakage. | Process management, spawn cost, a binary to keep current. |
+| **Modular monolith** over services | Trivial to run; shared types, no network hops. | No fault isolation — softened by global handlers & per-loop guards. |
+| **tsx runtime** over a build | Edit-and-run; no `dist/`. | No emit-time check — CI runs `tsc --noEmit`. |
+| **Message-Content intent** over slash-only | Natural language in a chosen channel. | A privileged intent and a wider input surface to sanitise. |
+| **Interval polling** over a scheduler | A few lines; no cron or queue. | Minute-granular, some idle ticks — fine for prices and reminders. |
 
 ## Setup
 
