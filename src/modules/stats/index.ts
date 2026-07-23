@@ -40,6 +40,67 @@ export function collectStats(): {
   return { mem: process.memoryUsage(), music: musicStats(), ollama: ollamaStats(), db: dbStats() };
 }
 
+// CPU% between successive metrics polls (the web dashboard polls on an interval).
+let lastCpu = process.cpuUsage();
+let lastCpuAt = process.hrtime.bigint();
+
+export interface MetricsSnapshot {
+  uptimeSec: number;
+  cpuPercent: number;
+  guilds: number;
+  memory: { rss: number; heapUsed: number; heapTotal: number; buffers: number };
+  music: ReturnType<typeof musicStats>;
+  ollama: ReturnType<typeof ollamaStats>;
+  db: ReturnType<typeof dbStats>;
+}
+
+/** Full snapshot for the web dashboard / API. CPU% is measured since the previous call. */
+export function metricsSnapshot(guilds: number): MetricsSnapshot {
+  const now = process.hrtime.bigint();
+  const delta = process.cpuUsage(lastCpu);
+  const elapsedUs = Number(now - lastCpuAt) / 1000;
+  lastCpu = process.cpuUsage();
+  lastCpuAt = now;
+  const cpuPercent = elapsedUs > 0 ? ((delta.user + delta.system) / elapsedUs) * 100 : 0;
+  const s = collectStats();
+  return {
+    uptimeSec: Math.round(process.uptime()),
+    cpuPercent: Number(cpuPercent.toFixed(1)),
+    guilds,
+    memory: {
+      rss: s.mem.rss,
+      heapUsed: s.mem.heapUsed,
+      heapTotal: s.mem.heapTotal,
+      buffers: s.mem.external + s.mem.arrayBuffers,
+    },
+    music: s.music,
+    ollama: s.ollama,
+    db: s.db,
+  };
+}
+
+/** Prometheus exposition format — point a scraper at /prometheus if you add Grafana. */
+export function prometheusText(m: MetricsSnapshot): string {
+  const lines = [
+    `camelo_uptime_seconds ${m.uptimeSec}`,
+    `camelo_cpu_percent ${m.cpuPercent}`,
+    `camelo_guilds ${m.guilds}`,
+    `camelo_memory_rss_bytes ${m.memory.rss}`,
+    `camelo_memory_heap_used_bytes ${m.memory.heapUsed}`,
+    `camelo_memory_buffers_bytes ${m.memory.buffers}`,
+    `camelo_voice_sessions ${m.music.sessions}`,
+    `camelo_voice_playing ${m.music.playing}`,
+    `camelo_queued_tracks ${m.music.queued}`,
+    `camelo_ytdlp_inflight ${m.music.ytdlpInFlight}`,
+    `camelo_ollama_inflight ${m.ollama.inFlight}`,
+    `camelo_db_bytes ${m.db.sizeBytes}`,
+    `camelo_watches ${m.db.watches}`,
+    `camelo_reminders ${m.db.reminders}`,
+    `camelo_play_history_rows ${m.db.playHistory}`,
+  ];
+  return `${lines.join('\n')}\n`;
+}
+
 const stats: Command = {
   data: new SlashCommandBuilder()
     .setName('stats')

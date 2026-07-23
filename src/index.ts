@@ -4,6 +4,7 @@ import { config, requireEnv } from './config.js';
 import { startMentionCommands } from './modules/music/mentions.js';
 import { startReminders } from './modules/reminders/index.js';
 import { startStatsMonitor } from './modules/stats/index.js';
+import { startStatsServer } from './modules/stats/server.js';
 import { startWatcher } from './modules/watcher/watcher.js';
 import { startWelcome } from './modules/welcome/index.js';
 import { allCommands } from './registry.js';
@@ -34,6 +35,7 @@ client.once(Events.ClientReady, (c) => {
   startWatcher(client);
   startReminders(client);
   startStatsMonitor(client);
+  startStatsServer(client);
 });
 
 startWelcome(client);
