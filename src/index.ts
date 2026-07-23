@@ -3,6 +3,7 @@ import type { Command } from './commands.js';
 import { config, requireEnv } from './config.js';
 import { startMentionCommands } from './modules/music/mentions.js';
 import { startReminders } from './modules/reminders/index.js';
+import { startStatsMonitor } from './modules/stats/index.js';
 import { startWatcher } from './modules/watcher/watcher.js';
 import { startWelcome } from './modules/welcome/index.js';
 import { allCommands } from './registry.js';
@@ -32,6 +33,7 @@ client.once(Events.ClientReady, (c) => {
   console.log(`Logged in as ${c.user.tag}`);
   startWatcher(client);
   startReminders(client);
+  startStatsMonitor(client);
 });
 
 startWelcome(client);

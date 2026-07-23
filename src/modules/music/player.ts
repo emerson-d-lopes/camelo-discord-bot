@@ -403,6 +403,17 @@ export function getSession(guildId: string): MusicSession | undefined {
   return sessions.get(guildId);
 }
 
+/** Live music metrics for monitoring. Each playing session runs a yt-dlp + ffmpeg pair. */
+export function musicStats(): { sessions: number; playing: number; queued: number; ytdlpInFlight: number } {
+  let queued = 0;
+  let playing = 0;
+  for (const s of sessions.values()) {
+    queued += s.queue.length;
+    if (s.current) playing++;
+  }
+  return { sessions: sessions.size, playing, queued, ytdlpInFlight };
+}
+
 export async function getOrCreateSession(channel: VoiceBasedChannel): Promise<MusicSession> {
   const existing = sessions.get(channel.guild.id);
   if (existing) return existing;

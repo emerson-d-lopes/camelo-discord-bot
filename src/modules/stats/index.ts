@@ -1,0 +1,131 @@
+import { type Client, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import type { Command } from '../../commands.js';
+import { dbStats } from '../../db.js';
+import { ollamaStats } from '../../ollama.js';
+import { musicStats } from '../music/player.js';
+
+const OWNER_ID = process.env.OWNER_ID;
+
+function mib(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function humanDuration(sec: number): string {
+  const d = Math.floor(sec / 86_400);
+  const h = Math.floor((sec % 86_400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const parts = [];
+  if (d) parts.push(`${d}d`);
+  if (h) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return parts.join(' ');
+}
+
+/** Sample process CPU over a short window and return whole-process % (can exceed 100 across cores). */
+async function cpuPercent(sampleMs = 400): Promise<number> {
+  const start = process.cpuUsage();
+  const startTime = process.hrtime.bigint();
+  await new Promise((r) => setTimeout(r, sampleMs));
+  const delta = process.cpuUsage(start); // microseconds
+  const elapsedUs = Number(process.hrtime.bigint() - startTime) / 1000;
+  return ((delta.user + delta.system) / elapsedUs) * 100;
+}
+
+export function collectStats(): {
+  mem: NodeJS.MemoryUsage;
+  music: ReturnType<typeof musicStats>;
+  ollama: ReturnType<typeof ollamaStats>;
+  db: ReturnType<typeof dbStats>;
+} {
+  return { mem: process.memoryUsage(), music: musicStats(), ollama: ollamaStats(), db: dbStats() };
+}
+
+const stats: Command = {
+  data: new SlashCommandBuilder()
+    .setName('stats')
+    .setDescription('Show the bot’s resource usage (admin only)')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  async execute(interaction) {
+    // Optional hard lock to a single owner id, on top of the admin-only default.
+    if (OWNER_ID && interaction.user.id !== OWNER_ID) {
+      await interaction.reply({ content: 'Owner only.', flags: 64 });
+      return;
+    }
+    await interaction.deferReply();
+    const cpu = await cpuPercent();
+    const s = collectStats();
+    const cores = (await import('node:os')).cpus().length;
+
+    const embed = new EmbedBuilder()
+      .setTitle('📊 Camelô resource usage')
+      .setColor(0x8b5cf6)
+      .addFields(
+        {
+          name: 'Process',
+          value: [
+            `Uptime: ${humanDuration(process.uptime())}`,
+            `CPU: ${cpu.toFixed(0)}% of 1 core (${cores} cores total)`,
+            `WS ping: ${Math.max(0, Math.round(interaction.client.ws.ping))} ms`,
+          ].join('\n'),
+          inline: false,
+        },
+        {
+          name: 'Memory',
+          value: [
+            `RSS: **${mib(s.mem.rss)}**`,
+            `Heap: ${mib(s.mem.heapUsed)} / ${mib(s.mem.heapTotal)}`,
+            `Buffers (external): ${mib(s.mem.external + s.mem.arrayBuffers)}`,
+          ].join('\n'),
+          inline: true,
+        },
+        {
+          name: 'Music (heaviest load)',
+          value: [
+            `Voice sessions: **${s.music.sessions}** (${s.music.playing} playing)`,
+            `Queued tracks: ${s.music.queued}`,
+            `yt-dlp resolves: ${s.music.ytdlpInFlight}/6`,
+            `≈ ${s.music.playing * 2} stream procs (yt-dlp + ffmpeg)`,
+          ].join('\n'),
+          inline: true,
+        },
+        {
+          name: 'AI (local Ollama)',
+          value: `In flight: ${s.ollama.inFlight}/${s.ollama.max}`,
+          inline: true,
+        },
+        {
+          name: 'Data',
+          value: [
+            `DB size: ${mib(s.db.sizeBytes)}`,
+            `Watches: ${s.db.watches} · Reminders: ${s.db.reminders}`,
+            `Play history: ${s.db.playHistory} rows`,
+          ].join('\n'),
+          inline: true,
+        },
+        {
+          name: 'Servers',
+          value: `${interaction.client.guilds.cache.size} guild(s)`,
+          inline: true,
+        },
+      )
+      .setFooter({ text: `Node ${process.version} · pid ${process.pid}` });
+
+    await interaction.editReply({ embeds: [embed] });
+  },
+};
+
+/** Log a one-line resource summary on an interval — for headless monitoring. */
+export function startStatsMonitor(_client: Client, everyMinutes = 15): void {
+  const log = () => {
+    const s = collectStats();
+    console.log(
+      `[stats] rss=${mib(s.mem.rss)} sessions=${s.music.sessions}(playing ${s.music.playing}) ` +
+        `queued=${s.music.queued} ytdlp=${s.music.ytdlpInFlight} ollama=${s.ollama.inFlight} ` +
+        `db=${mib(s.db.sizeBytes)}`,
+    );
+  };
+  log();
+  setInterval(log, everyMinutes * 60_000).unref();
+}
+
+export const statsCommands: Command[] = [stats];

@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
 
 mkdirSync('data', { recursive: true });
@@ -282,6 +282,35 @@ export function recentPlays(guildId: string, userId: string, limit = 15): string
     .prepare('SELECT DISTINCT title FROM play_history WHERE guild_id = ? ORDER BY id DESC LIMIT ?')
     .all(guildId, limit) as { title: string }[];
   return guild.map((r) => r.title);
+}
+
+/** Row counts and on-disk size for monitoring. */
+export function dbStats(): {
+  watches: number;
+  reminders: number;
+  playHistory: number;
+  sizeBytes: number;
+} {
+  const count = (table: string): number =>
+    (db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }).c;
+  let sizeBytes = 0;
+  try {
+    // Include the WAL file — it can hold a lot before a checkpoint.
+    sizeBytes = statSync('data/bot.db').size;
+    try {
+      sizeBytes += statSync('data/bot.db-wal').size;
+    } catch {
+      // no WAL file yet
+    }
+  } catch {
+    // db not on disk yet
+  }
+  return {
+    watches: count('watches'),
+    reminders: count('reminders'),
+    playHistory: count('play_history'),
+    sizeBytes,
+  };
 }
 
 export function setMusicChannel(guildId: string, channelId: string | null): void {

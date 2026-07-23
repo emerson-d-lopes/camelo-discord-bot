@@ -29,6 +29,11 @@ export class OllamaBusyError extends Error {}
 const MAX_CONCURRENT = 2;
 let inFlight = 0;
 
+/** Current and max concurrent Ollama calls, for monitoring. */
+export function ollamaStats(): { inFlight: number; max: number } {
+  return { inFlight, max: MAX_CONCURRENT };
+}
+
 /**
  * One-shot chat completion against local Ollama. `format` takes a JSON schema
  * for structured output. Throws on failure — callers decide the fallback.
