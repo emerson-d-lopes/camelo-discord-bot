@@ -3,6 +3,23 @@ import type { Command } from '../../commands.js';
 
 const NUMBER_EMOJI = ['1️⃣', '2️⃣', '3️⃣', '4️⃣'];
 
+export interface DiceSpec {
+  count: number;
+  sides: number;
+  mod: number;
+}
+
+/** Parse "d20" / "2d6+3" into a capped spec (≤100 dice, ≤10000 sides); null on bad input. */
+export function parseDiceSpec(spec: string): DiceSpec | null {
+  const m = spec.replace(/\s/g, '').match(/^(\d*)d(\d+)([+-]\d+)?$/i);
+  if (!m) return null;
+  const count = Math.min(Number(m[1] || 1), 100);
+  const sides = Math.min(Number(m[2]), 10_000);
+  const mod = Number(m[3] ?? 0);
+  if (count < 1 || sides < 2) return null;
+  return { count, sides, mod };
+}
+
 const poll: Command = {
   data: new SlashCommandBuilder()
     .setName('poll')
@@ -44,21 +61,15 @@ const roll: Command = {
     .addStringOption((o) => o.setName('dice').setDescription('e.g. d20, 2d6+3 (default d20)')),
   async execute(interaction) {
     const spec = interaction.options.getString('dice') ?? 'd20';
-    const m = spec.replace(/\s/g, '').match(/^(\d*)d(\d+)([+-]\d+)?$/i);
-    if (!m) {
+    const parsed = parseDiceSpec(spec);
+    if (!parsed) {
       await interaction.reply({
         content: 'Bad dice spec. Try `d20`, `2d6`, `3d8+2`.',
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
-    const count = Math.min(Number(m[1] || 1), 100);
-    const sides = Math.min(Number(m[2]), 10_000);
-    const mod = Number(m[3] ?? 0);
-    if (count < 1 || sides < 2) {
-      await interaction.reply({ content: 'Bad dice spec.', flags: MessageFlags.Ephemeral });
-      return;
-    }
+    const { count, sides, mod } = parsed;
     const rolls = Array.from({ length: count }, () => 1 + Math.floor(Math.random() * sides));
     const total = rolls.reduce((a, b) => a + b, 0) + mod;
     const detail =

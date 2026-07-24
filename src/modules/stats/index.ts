@@ -29,14 +29,17 @@ function humanDuration(sec: number): string {
   return parts.join(' ');
 }
 
+/** CPU% of one core from a cpuUsage delta (microseconds) over elapsed wall time. */
+function cpuPct(delta: NodeJS.CpuUsage, elapsedUs: number): number {
+  return elapsedUs > 0 ? ((delta.user + delta.system) / elapsedUs) * 100 : 0;
+}
+
 /** Sample process CPU over a short window and return whole-process % (can exceed 100 across cores). */
 async function cpuPercent(sampleMs = 400): Promise<number> {
   const start = process.cpuUsage();
   const startTime = process.hrtime.bigint();
   await new Promise((r) => setTimeout(r, sampleMs));
-  const delta = process.cpuUsage(start); // microseconds
-  const elapsedUs = Number(process.hrtime.bigint() - startTime) / 1000;
-  return ((delta.user + delta.system) / elapsedUs) * 100;
+  return cpuPct(process.cpuUsage(start), Number(process.hrtime.bigint() - startTime) / 1000);
 }
 
 export function collectStats(): {
@@ -66,11 +69,9 @@ export interface MetricsSnapshot {
 /** Full snapshot for the web dashboard / API. CPU% is measured since the previous call. */
 export function metricsSnapshot(guilds: number): MetricsSnapshot {
   const now = process.hrtime.bigint();
-  const delta = process.cpuUsage(lastCpu);
-  const elapsedUs = Number(now - lastCpuAt) / 1000;
+  const cpuPercent = cpuPct(process.cpuUsage(lastCpu), Number(now - lastCpuAt) / 1000);
   lastCpu = process.cpuUsage();
   lastCpuAt = now;
-  const cpuPercent = elapsedUs > 0 ? ((delta.user + delta.system) / elapsedUs) * 100 : 0;
   const s = collectStats();
   return {
     uptimeSec: Math.round(process.uptime()),
