@@ -62,6 +62,14 @@ export function startStatsServer(client: Client): void {
   server.listen(port, host, () => {
     console.log(`[stats] dashboard on http://${host}:${port}${token ? ' (token required)' : ''}`);
   });
+  statsServer = server;
+}
+
+let statsServer: ReturnType<typeof createServer> | undefined;
+
+export function stopStatsServer(): void {
+  statsServer?.close();
+  statsServer = undefined;
 }
 
 // Self-contained page; polls /metrics and re-renders. Passes the token through

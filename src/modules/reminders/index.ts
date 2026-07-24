@@ -28,11 +28,17 @@ export function parseDuration(input: string): number | null {
   return ms > 0 ? ms : null;
 }
 
+let interval: NodeJS.Timeout | undefined;
+
+export function stopReminders(): void {
+  clearInterval(interval);
+}
+
 export function startReminders(client: Client): void {
   // Overlap guard: a slow pass (many closed-DM fetches) must not let the next
   // tick start and double-deliver.
   let running = false;
-  setInterval(async () => {
+  interval = setInterval(async () => {
     if (running) return;
     running = true;
     try {

@@ -6,6 +6,11 @@ mkdirSync('data', { recursive: true });
 export const db = new Database('data/bot.db');
 db.pragma('journal_mode = WAL');
 
+/** Close the handle at shutdown so the WAL checkpoints instead of lingering. */
+export function closeDb(): void {
+  if (db.open) db.close();
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS watches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

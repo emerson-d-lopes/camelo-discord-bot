@@ -1,11 +1,13 @@
 import { Client, Events, GatewayIntentBits, MessageFlags } from 'discord.js';
 import type { Command } from './commands.js';
 import { config, requireEnv } from './config.js';
+import { closeDb } from './db.js';
 import { startMentionCommands } from './modules/music/mentions.js';
-import { startReminders } from './modules/reminders/index.js';
+import { destroyAllSessions } from './modules/music/player.js';
+import { startReminders, stopReminders } from './modules/reminders/index.js';
 import { startStatsMonitor } from './modules/stats/index.js';
-import { startStatsServer } from './modules/stats/server.js';
-import { startWatcher } from './modules/watcher/watcher.js';
+import { startStatsServer, stopStatsServer } from './modules/stats/server.js';
+import { startWatcher, stopWatcher } from './modules/watcher/watcher.js';
 import { startWelcome } from './modules/welcome/index.js';
 import { allCommands } from './registry.js';
 import { rateAllow } from './security.js';
@@ -73,5 +75,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 });
+
+// Graceful shutdown: persist queues and leave voice (destroyAllSessions kills
+// the yt-dlp/ffmpeg children too), stop the loops, close the gateway, then let
+// SQLite checkpoint its WAL. Docker sends SIGTERM on every `compose stop`.
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received — closing down`);
+  try {
+    destroyAllSessions();
+  } catch (err) {
+    console.warn('[shutdown] session teardown failed:', err);
+  }
+  stopWatcher();
+  stopReminders();
+  stopStatsServer();
+  try {
+    await client.destroy();
+  } catch (err) {
+    console.warn('[shutdown] client destroy failed:', err);
+  }
+  try {
+    closeDb();
+  } catch (err) {
+    console.warn('[shutdown] db close failed:', err);
+  }
+  process.exit(0);
+}
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
 client.login(config.token);

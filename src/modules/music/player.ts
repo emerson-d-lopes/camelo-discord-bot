@@ -424,6 +424,15 @@ export function getSession(guildId: string): MusicSession | undefined {
   return sessions.get(guildId);
 }
 
+/**
+ * Tear down every live session — persists queues, kills yt-dlp children, and
+ * leaves voice. Called from the process shutdown handler; without it a restart
+ * leaves voice connections dangling until Discord times them out.
+ */
+export function destroyAllSessions(): void {
+  for (const s of [...sessions.values()]) s.destroy();
+}
+
 /** Live music metrics for monitoring. Each playing session runs a yt-dlp + ffmpeg pair. */
 export function musicStats(): { sessions: number; playing: number; queued: number; ytdlpInFlight: number } {
   let queued = 0;

@@ -33,7 +33,13 @@ export function startWatcher(client: Client): void {
       });
   };
   run();
-  setInterval(run, 60_000);
+  interval = setInterval(run, 60_000);
+}
+
+let interval: NodeJS.Timeout | undefined;
+
+export function stopWatcher(): void {
+  clearInterval(interval);
 }
 
 function isDue(watch: Watch): boolean {
