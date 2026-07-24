@@ -55,6 +55,24 @@ export function isAllowedMediaUrl(raw: string): boolean {
 
 // --- SSRF guard (scraper + screenshots) ---
 
+/**
+ * Extract the embedded IPv4 from an IPv4-mapped IPv6 address (`::ffff:…`) in
+ * either notation: the dotted tail `::ffff:127.0.0.1`, or the hex tail
+ * `::ffff:7f00:1` that the WHATWG URL parser normalizes it to. Returns null for
+ * any other/unrecognized mapped form so the caller can fail closed. Without the
+ * hex case, `http://[::ffff:127.0.0.1]/` slips past the guard and reaches
+ * loopback / cloud-metadata / LAN (SSRF).
+ */
+function mappedV4(lower: string): string | null {
+  const tail = lower.slice('::ffff:'.length);
+  if (isIP(tail) === 4) return tail; // ::ffff:a.b.c.d
+  const m = tail.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/); // ::ffff:hhhh:hhhh
+  if (!m) return null;
+  const hi = Number.parseInt(m[1], 16);
+  const lo = Number.parseInt(m[2], 16);
+  return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+}
+
 function isPrivateIp(addr: string): boolean {
   if (isIP(addr) === 4) {
     const [a, b] = addr.split('.').map(Number);
@@ -62,6 +80,7 @@ function isPrivateIp(addr: string): boolean {
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 168) return true;
     if (a === 169 && b === 254) return true; // link-local / cloud metadata
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT (RFC 6598)
     if (a >= 224) return true; // multicast/reserved
     return false;
   }
@@ -83,7 +102,12 @@ function isPrivateIp(addr: string): boolean {
   )
     return true; // deprecated site-local
   if (lower.startsWith('64:ff9b:')) return true; // NAT64
-  if (lower.startsWith('::ffff:')) return isPrivateIp(lower.slice(7)); // v4-mapped
+  if (lower.startsWith('2002:')) return true; // 6to4 — can embed any v4, incl. private
+  if (lower.startsWith('::ffff:')) {
+    // v4-mapped: classify the embedded v4; treat unknown mapped forms as unsafe.
+    const v4 = mappedV4(lower);
+    return v4 ? isPrivateIp(v4) : true;
+  }
   return false;
 }
 

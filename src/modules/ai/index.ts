@@ -174,6 +174,15 @@ const chatchannel: Command = {
       await interaction.reply({ content: 'Server-only command.', flags: MessageFlags.Ephemeral });
       return;
     }
+    // Defense in depth: setDefaultMemberPermissions is a client-side default an
+    // admin can override per guild, so re-check server-side.
+    if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+      await interaction.reply({
+        content: 'You need the Manage Server permission to do that.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
     if (interaction.options.getSubcommand() === 'off') {
       setChatChannel(interaction.guildId, null);
       await interaction.reply({ content: 'Chat channel disabled.', flags: MessageFlags.Ephemeral });

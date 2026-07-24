@@ -172,9 +172,12 @@ export async function scrapePrice(url: string, selector?: string | null): Promis
     const text = $(selector).first().text().trim();
     const price = parsePriceText(text);
     if (price === null) {
+      // Never echo the matched text back to Discord — if an SSRF guard gap ever
+      // let this fetch an internal URL, that string would exfiltrate the page's
+      // contents a request at a time. Report only whether a price parsed.
       throw new ScrapeError(
         text
-          ? `Selector matched "${text.slice(0, 60)}" but no price could be parsed from it.`
+          ? 'The selector matched an element, but no price could be parsed from it.'
           : 'Selector matched nothing on the page.',
       );
     }

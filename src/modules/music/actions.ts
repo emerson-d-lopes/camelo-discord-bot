@@ -1,4 +1,5 @@
 import { EmbedBuilder, type VoiceBasedChannel } from 'discord.js';
+import { mdLinkText } from '../../interactions.js';
 import { getOrCreateSession, type MusicSession, resolveTracks } from './player.js';
 
 /**
@@ -76,7 +77,7 @@ export function nowPlayingEmbed(session: MusicSession | undefined): EmbedBuilder
   const t = session.current;
   return new EmbedBuilder()
     .setTitle('🎵 Now playing')
-    .setDescription(t.url.startsWith('http') ? `**[${t.title}](${t.url})**` : `**${t.title}**`)
+    .setDescription(t.url.startsWith('http') ? `**[${mdLinkText(t.title)}](${t.url})**` : `**${t.title}**`)
     .addFields(
       { name: 'Elapsed', value: `${formatMs(session.elapsedMs())} / ${t.duration}`, inline: true },
       { name: 'Requested by', value: `<@${t.requestedBy}>`, inline: true },

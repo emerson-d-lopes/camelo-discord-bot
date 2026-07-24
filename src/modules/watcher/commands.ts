@@ -10,6 +10,7 @@ import {
   touchWatch,
   updateWatchPrice,
 } from '../../db.js';
+import { mdLinkText } from '../../interactions.js';
 import { ScrapeError, scrapePrice } from './scraper.js';
 
 function fmt(price: number | null, currency: string | null): string {
@@ -236,7 +237,7 @@ const watchlist: Command = {
     const lines = watches.map((w) => {
       const targetPart = w.target_price !== null ? ` (target ${fmt(w.target_price, w.currency)})` : '';
       const failPart = w.fail_count > 0 ? ` ⚠️${w.fail_count} fails` : '';
-      return `**#${w.id}** [${w.title.slice(0, 60)}](${w.url}) — ${fmt(w.last_price, w.currency)}${targetPart}${failPart}`;
+      return `**#${w.id}** [${mdLinkText(w.title.slice(0, 60))}](${w.url}) — ${fmt(w.last_price, w.currency)}${targetPart}${failPart}`;
     });
 
     await interaction.reply({

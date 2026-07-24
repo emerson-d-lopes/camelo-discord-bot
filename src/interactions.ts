@@ -9,3 +9,12 @@ export function ephemeral(interaction: ChatInputCommandInteraction, content: str
 export function replyNoPing(interaction: ChatInputCommandInteraction, content: string): Promise<unknown> {
   return interaction.reply({ content, allowedMentions: { parse: [] } });
 }
+
+/**
+ * Neutralize markdown link syntax in untrusted text used as the label of a
+ * `[label](url)` link (track titles, scraped page titles). Without this a title
+ * like `x](https://evil)` breaks out of the intended link and forges its own.
+ */
+export function mdLinkText(text: string): string {
+  return text.replace(/[[\]()]/g, '\\$&');
+}

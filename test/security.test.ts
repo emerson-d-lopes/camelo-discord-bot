@@ -39,6 +39,25 @@ test('assertPublicHttpUrl — rejects unsafe URLs, counts blocks', async () => {
   assert.ok(ssrfBlockCount() > before);
 });
 
+test('assertPublicHttpUrl — IPv4-mapped / 6to4 / special-use are blocked (SSRF)', async () => {
+  // These go through new URL(), which normalizes v4-mapped IPv6 to its hex form
+  // (::ffff:127.0.0.1 -> ::ffff:7f00:1) — the notation that previously slipped
+  // past the guard and reached loopback / cloud-metadata / LAN.
+  const bad = [
+    'http://[::ffff:127.0.0.1]/', // v4-mapped loopback
+    'http://[::ffff:169.254.169.254]/', // v4-mapped cloud metadata
+    'http://[::ffff:10.0.0.1]/', // v4-mapped private
+    'http://[2002:7f00:1::]/', // 6to4 embedding 127.0.0.1
+    'http://100.64.0.1/', // CGNAT (RFC 6598)
+    'http://100.127.255.254/', // CGNAT upper bound
+  ];
+  for (const url of bad) {
+    await assert.rejects(assertPublicHttpUrl(url), url);
+  }
+  // A genuinely public v4-mapped address must still be allowed.
+  await assert.doesNotReject(assertPublicHttpUrl('http://[::ffff:8.8.8.8]/'));
+});
+
 test('pinPublicHost — pins public IP, rejects private + odd ports', async () => {
   const pin = await pinPublicHost('8.8.8.8', 443);
   assert.equal(pin.address, '8.8.8.8');

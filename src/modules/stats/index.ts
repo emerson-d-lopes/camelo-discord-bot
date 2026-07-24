@@ -1,4 +1,10 @@
-import { type Client, EmbedBuilder, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import {
+  type Client,
+  EmbedBuilder,
+  MessageFlags,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+} from 'discord.js';
 import type { Command } from '../../commands.js';
 import { dbStats } from '../../db.js';
 import { ollamaStats } from '../../ollama.js';
@@ -111,9 +117,16 @@ const stats: Command = {
     .setDescription('Show the bot’s resource usage (admin only)')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   async execute(interaction) {
-    // Optional hard lock to a single owner id, on top of the admin-only default.
-    if (OWNER_ID && interaction.user.id !== OWNER_ID) {
-      await interaction.reply({ content: 'Owner only.', flags: 64 });
+    // Defense in depth: the admin-only default (setDefaultMemberPermissions) can
+    // be overridden per guild, so authorize server-side here too. OWNER_ID, when
+    // set, is the hard lock; otherwise require Administrator.
+    if (OWNER_ID) {
+      if (interaction.user.id !== OWNER_ID) {
+        await interaction.reply({ content: 'Owner only.', flags: MessageFlags.Ephemeral });
+        return;
+      }
+    } else if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+      await interaction.reply({ content: 'Administrator only.', flags: MessageFlags.Ephemeral });
       return;
     }
     await interaction.deferReply();

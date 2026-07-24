@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { PassThrough } from 'node:stream';
 import {
   type AudioPlayer,
@@ -24,6 +25,23 @@ export interface Track {
 }
 
 export type LoopMode = 'off' | 'track' | 'queue';
+
+// Fail-fast against a latent command-injection primitive in youtube-dl-exec:
+// on Windows, when the yt-dlp binary path contains whitespace it forces
+// `shell: true`, so cmd.exe metacharacters in a /play value would execute. The
+// path is normally space-free (under node_modules), but a install under e.g.
+// "C:\Program Files\" or a "C:\Users\First Last\" profile flips it. Refuse to
+// start rather than run vulnerable.
+const ytdlpBinaryPath: string =
+  (createRequire(import.meta.url)('youtube-dl-exec') as { constants?: { YOUTUBE_DL_PATH?: string } })
+    .constants?.YOUTUBE_DL_PATH ?? '';
+if (process.platform === 'win32' && /\s/.test(ytdlpBinaryPath)) {
+  throw new Error(
+    `[security] yt-dlp binary path contains whitespace (${ytdlpBinaryPath}). On Windows this makes ` +
+      'youtube-dl-exec run in shell mode, exposing /play to OS command injection. Reinstall under a ' +
+      'path with no spaces, or set YOUTUBE_DL_DIR to a space-free directory, then restart.',
+  );
+}
 
 const sessions = new Map<string, MusicSession>();
 
@@ -473,7 +491,9 @@ interface YtEntry {
 const PLAYLIST_MAX = 25;
 
 function entryUrl(entry: YtEntry): string | null {
-  if (entry.webpage_url) return entry.webpage_url;
+  // Only accept http(s) URLs from yt-dlp's output — never let a non-URL string
+  // (which could be read as a yt-dlp flag) reach the play spawn unvalidated.
+  if (entry.webpage_url && /^https?:\/\//i.test(entry.webpage_url)) return entry.webpage_url;
   if (entry.url && /^https?:\/\//i.test(entry.url)) return entry.url;
   if (entry.id) return `https://www.youtube.com/watch?v=${entry.id}`;
   return null;
