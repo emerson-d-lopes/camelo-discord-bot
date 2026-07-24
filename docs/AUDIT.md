@@ -1,5 +1,9 @@
 # Architecture & Code Audit — Camelô Discord bot
 
+> **Historical snapshot.** These findings describe the code at commit
+> `bac6e1f`; the actionable ones have since been addressed — see
+> [CHANGELOG-refactor.md](CHANGELOG-refactor.md) for what was done.
+
 Date: 2026-07-23. Read-only audit of the full repository (all of `src/`, tests,
 CI, Docker, docs) ahead of a design/documentation improvement pass. Findings are
 verified against the actual code, not the docs' claims. File references are

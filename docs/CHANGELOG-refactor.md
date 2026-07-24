@@ -86,6 +86,14 @@ Tests: 12 → 26, covering the security seams (`isAllowedMediaUrl`, `isHttpUrl`,
   path. CI (lint/typecheck/tests, audit, CodeQL, Semgrep, gitleaks) green on
   push.
 
+## Post-refactor ops (same day)
+
+- `docker-compose.yml` moved to `restart: always` and Docker Desktop's
+  sign-in autostart was enabled, so the bot survives crashes, engine
+  restarts, and reboots unattended (verified live: SIGTERM'd PID 1 →
+  container auto-restarted and re-logged in). On Windows/WSL2 the engine
+  needs a signed-in session — documented in the README.
+
 ## Deliberately left out (future candidates)
 
 - **Structured logger** — house style is tagged `console.*`; fine at this

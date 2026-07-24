@@ -55,8 +55,9 @@ screenshot with each alert (channel + DM).
 Single Node process, `tsx` runtime. The gateway client is the one entry point;
 two event paths (slash interactions and plain messages) fan into feature
 modules, which lean on a thin shared-infrastructure layer. Nothing listens on an
-inbound port — all input arrives through the Discord socket, which shapes the
-whole security model.
+inbound port (the opt-in stats dashboard, loopback-bound by default, aside) —
+all input arrives through the Discord socket, which shapes the whole security
+model.
 
 ```mermaid
 flowchart TB
@@ -79,8 +80,9 @@ flowchart TB
     fun[/fun/]
     wel[/welcome/]
     ai[/ai/]
+    st[/stats/]
   end
-  disp --> music & watch & rem & fun & wel & ai
+  disp --> music & watch & rem & fun & wel & ai & st
   msg -->|intent| music
 
   subgraph infra["shared infrastructure"]
@@ -92,7 +94,8 @@ flowchart TB
   watch --> sec & db
   rem --> db
   wel --> db
-  ai --> oll
+  ai --> oll & db
+  st --> db
 
   subgraph out["external services"]
     yt(["YouTube · yt-dlp subprocess"])

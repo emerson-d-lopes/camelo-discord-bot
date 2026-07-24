@@ -22,8 +22,8 @@ invariants below are enforced in code and must not regress.
 
 ## Security invariants (do not regress)
 
-- **Every user-supplied URL that is fetched** goes through `safeFetch` /
-  `assertPublicHttpUrl` (`src/security.ts`): blocks non-http(s) schemes,
+- **Every outbound fetch — user-supplied or hardcoded-host —** goes through
+  `safeFetch` / `assertPublicHttpUrl` (`src/security.ts`): blocks non-http(s) schemes,
   non-80/443 ports, credentials, localhost-style names, and any host resolving
   to a private / loopback / link-local / metadata address (IPv4, IPv6, ULA,
   link-local, v4-mapped, NAT64). The resolved IP is **pinned** at connect time
@@ -33,7 +33,8 @@ invariants below are enforced in code and must not regress.
   pins every connection — navigation, redirects, and sub-resources — to a
   validated public IP. `--proxy-bypass-list=<-loopback>` prevents the page from
   sidestepping the proxy to reach localhost.
-- **`/play` URLs** are restricted to the media host allowlist (`isAllowedMediaUrl`).
+- **`/play` URLs** are restricted to the media host allowlist
+  (`isAllowedMediaUrl`), re-checked at spawn time for playlist entries.
 - **yt-dlp** is invoked via `youtube-dl-exec` (execFile, no shell), every search
   is `ytsearch1:`-prefixed so an argument can never be parsed as a flag, and
   `--ignore-config` prevents on-disk config from altering behaviour.
@@ -58,15 +59,21 @@ rising count is an attacker probing internal addresses.
 - **Run as a dedicated low-privilege account** — never an administrator, and not
   your interactive user. The process needs write access only to its working
   directory and `data/`.
-- **Cap child processes** (yt-dlp, ffmpeg, Chrome) with OS resource limits — a
-  Windows Job Object or a Linux cgroup with memory/CPU/pids limits — so a hostile
-  media file or page cannot exhaust the host.
+- **Cap child processes** (yt-dlp, ffmpeg, Chrome) with OS resource limits — the
+  shipped `docker-compose.yml` does this (memory/CPU/pids ceilings, cap_drop ALL,
+  no-new-privileges, non-root); on a bare process use a Windows Job Object or a
+  Linux cgroup — so a hostile media file or page cannot exhaust the host.
 - **Keep the media/browser toolchain patched**: yt-dlp, ffmpeg, and Chrome are
   the most exposed dependencies. Update on a schedule; Dependabot handles the npm
   side, but the Chrome binary and yt-dlp updater are out of band.
-- **Never pass `--no-sandbox` to Chrome.** Keep the OS sandbox intact.
-- The stats dashboard binds `127.0.0.1` by default. If `STATS_HOST=0.0.0.0`,
-  `STATS_TOKEN` is mandatory; comparison is constant-time.
+- **Chrome sandbox policy**: kept intact on the desktop. Inside the container it
+  is dropped (`--no-sandbox` — user namespaces are blocked there), compensated
+  by JavaScript being disabled, all traffic forced through the guarded proxy, a
+  secret-scrubbed child environment, and the container itself as the boundary.
+  Never drop it in a bare-process deployment.
+- The stats dashboard binds `127.0.0.1` by default. A non-loopback `STATS_HOST`
+  without `STATS_TOKEN` is refused at startup (the server does not bind);
+  token comparison is constant-time.
 
 ## Discord & token hygiene
 

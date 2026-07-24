@@ -81,9 +81,14 @@ three on push.
 
 ## Workflow notes
 
-- **The bot must be restarted to pick up changes** when run via `pnpm start`
-  (not `dev`). After editing, restart and confirm `Logged in as Camelô#…` in the
-  output before testing.
+- **Production runs in Docker** as the `camelo-bot` container with
+  `restart: always` — it revives after crashes and on engine start. Deploy a
+  change with `docker compose up -d --build`; verify with
+  `docker compose logs -f` (`Logged in as Camelô#…`). `docker compose stop`
+  exercises the SIGTERM graceful-shutdown path.
+- **The bot must be restarted to pick up changes** when run bare via
+  `pnpm start` (not `dev`). After editing, restart and confirm
+  `Logged in as Camelô#…` in the output before testing.
 - Adding/renaming a slash command requires `pnpm register` to update Discord.
 - SQLite lives at `data/bot.db` (gitignored). Schema changes use the additive
   `PRAGMA table_info` + `ALTER TABLE` guards in `src/db.ts`.
