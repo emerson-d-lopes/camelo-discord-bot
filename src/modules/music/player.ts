@@ -1,47 +1,22 @@
-import { createRequire } from 'node:module';
-import { PassThrough } from 'node:stream';
+import type { PassThrough } from 'node:stream';
 import {
   type AudioPlayer,
   AudioPlayerStatus,
   type AudioResource,
   createAudioPlayer,
-  createAudioResource,
   entersState,
   joinVoiceChannel,
-  StreamType,
   type VoiceConnection,
   VoiceConnectionStatus,
 } from '@discordjs/voice';
 import type { Client, VoiceBasedChannel } from 'discord.js';
 import { youtubeDl } from 'youtube-dl-exec';
-import { loadMusicState, recordPlay, saveMusicState } from '../../db.js';
+import { recordPlay } from '../../db.js';
 import { cappedText, isAllowedMediaUrl, isHttpUrl, safeFetch } from '../../security.js';
+import { type LoopMode, type Track, TrackQueue } from './queue.js';
+import { spawnTrackStream } from './stream.js';
 
-export interface Track {
-  title: string;
-  url: string;
-  duration: string;
-  requestedBy: string;
-}
-
-export type LoopMode = 'off' | 'track' | 'queue';
-
-// Fail-fast against a latent command-injection primitive in youtube-dl-exec:
-// on Windows, when the yt-dlp binary path contains whitespace it forces
-// `shell: true`, so cmd.exe metacharacters in a /play value would execute. The
-// path is normally space-free (under node_modules), but a install under e.g.
-// "C:\Program Files\" or a "C:\Users\First Last\" profile flips it. Refuse to
-// start rather than run vulnerable.
-const ytdlpBinaryPath: string =
-  (createRequire(import.meta.url)('youtube-dl-exec') as { constants?: { YOUTUBE_DL_PATH?: string } })
-    .constants?.YOUTUBE_DL_PATH ?? '';
-if (process.platform === 'win32' && /\s/.test(ytdlpBinaryPath)) {
-  throw new Error(
-    `[security] yt-dlp binary path contains whitespace (${ytdlpBinaryPath}). On Windows this makes ` +
-      'youtube-dl-exec run in shell mode, exposing /play to OS command injection. Reinstall under a ' +
-      'path with no spaces, or set YOUTUBE_DL_DIR to a space-free directory, then restart.',
-  );
-}
+export type { LoopMode, Track } from './queue.js';
 
 const sessions = new Map<string, MusicSession>();
 
@@ -68,10 +43,8 @@ async function withYtdlpSlot<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export class MusicSession {
-  readonly queue: Track[] = [];
-  current: Track | null = null;
-  loopMode: LoopMode = 'off';
-  autoplay = true; // radio by default — one song seeds a continuous queue
+  /** Queue state + persistence live in TrackQueue; the session wires it to voice. */
+  private readonly q: TrackQueue;
   volume = 1;
   private lastTrack: Track | null = null;
   skipVotes = new Set<string>();
@@ -97,18 +70,8 @@ export class MusicSession {
     this.player = createAudioPlayer({ behaviors: { maxMissedFrames: 250 } });
     connection.subscribe(this.player);
 
-    // Restore persisted queue/settings from a previous run.
-    const saved = loadMusicState(guildId);
-    if (saved) {
-      try {
-        this.queue.push(...(JSON.parse(saved.queue_json) as Track[]));
-      } catch {
-        // corrupted state — start clean
-      }
-      if (saved.loop_mode === 'track' || saved.loop_mode === 'queue') this.loopMode = saved.loop_mode;
-      // autoplay is not restored — radio-on is the per-session default; a stale
-      // saved value shouldn't silence the bot after a restart.
-    }
+    // TrackQueue restores the persisted queue/settings from a previous run.
+    this.q = new TrackQueue(guildId);
 
     this.player.on(AudioPlayerStatus.Idle, () => void this.playNext());
     this.player.on('error', (err) => {
@@ -129,6 +92,32 @@ export class MusicSession {
     });
 
     this.housekeeper = setInterval(() => void this.housekeep(), 60_000);
+  }
+
+  // --- public queue surface (delegates to TrackQueue, same shapes as before) ---
+
+  get queue(): Track[] {
+    return this.q.tracks;
+  }
+
+  get current(): Track | null {
+    return this.q.current;
+  }
+
+  get loopMode(): LoopMode {
+    return this.q.loopMode;
+  }
+
+  set loopMode(mode: LoopMode) {
+    this.q.loopMode = mode;
+  }
+
+  get autoplay(): boolean {
+    return this.q.autoplay;
+  }
+
+  set autoplay(on: boolean) {
+    this.q.autoplay = on;
   }
 
   /** Auto-leave when idle with an empty queue, or alone in the channel, for IDLE_LEAVE_MINUTES. */
@@ -168,16 +157,9 @@ export class MusicSession {
     }
   }
 
-  private persist(): void {
-    // Current track goes back to the front so a restart resumes with it.
-    const toSave = this.current ? [this.current, ...this.queue] : [...this.queue];
-    saveMusicState(this.guildId, JSON.stringify(toSave), this.loopMode, this.autoplay);
-  }
-
   enqueue(track: Track): void {
-    this.queue.push(track);
+    this.q.push(track);
     if (this.current === null) void this.playNext();
-    else this.persist();
   }
 
   /** Kick off playback of the restored queue without adding anything. */
@@ -214,31 +196,24 @@ export class MusicSession {
     this.killProc();
     this.skipVotes.clear();
 
-    const repeatTrack = this.loopMode === 'track' && this.current !== null && !this.skipRequested;
+    const { track: picked, repeated } = this.q.pickNext(this.skipRequested);
     this.skipRequested = false;
 
-    let next: Track | undefined;
-    if (repeatTrack) {
-      next = this.current!;
-    } else {
-      if (this.loopMode === 'queue' && this.current !== null) this.queue.push(this.current);
-      next = this.queue.shift();
-    }
-
+    let next = picked;
     if (!next && this.autoplay && this.current) {
       next = await this.fetchAutoplayTrack(this.current);
     }
 
     if (!next) {
-      this.current = null;
-      this.persist();
+      this.q.current = null;
+      this.q.persist();
       return;
     }
-    this.current = next;
+    this.q.current = next;
     this.lastTrack = next;
     this.rememberUrl(next.url);
-    this.persist();
-    if (!repeatTrack) {
+    this.q.persist();
+    if (!repeated) {
       try {
         recordPlay(this.guildId, next.requestedBy, next.title);
       } catch (err) {
@@ -253,55 +228,24 @@ export class MusicSession {
     // (`ytsearch1:` placeholders are not URLs and skip this check.)
     if (isHttpUrl(next.url) && !isAllowedMediaUrl(next.url)) {
       console.warn(`[music] dropping track with non-allowlisted url: ${next.url}`);
-      this.current = null;
-      this.persist();
+      this.q.current = null;
+      this.q.persist();
       // Don't stall — the playNext() finally-guard advances to the next track.
       return;
     }
 
-    const proc = youtubeDl.exec(
-      next.url,
-      {
-        output: '-',
-        format: 'bestaudio[acodec=opus]/bestaudio/best',
-        quiet: true,
-        noPlaylist: true,
-        noWarnings: true,
-        // Ignore any on-disk yt-dlp config so behaviour can't be altered by a
-        // file dropped in the home dir / cwd.
-        ignoreConfig: true,
-      },
-      { stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    this.proc = proc;
-    proc.catch((err: unknown) => {
-      if (proc.killed) return;
-      console.error(`[music] yt-dlp failed for ${next.url}:`, err instanceof Error ? err.message : err);
-    });
-
-    if (!proc.stdout) {
+    const stream = spawnTrackStream(next.url, this.volume);
+    if (!stream) {
       console.error('[music] yt-dlp spawned without stdout — skipping track');
-      this.current = null;
-      this.persist();
+      this.q.current = null;
+      this.q.persist();
       // Don't stall — the playNext() finally-guard advances to the next track.
       return;
     }
-    // Lookahead buffer: without it, backpressure throttles the download to
-    // realtime playback speed, so any network jitter immediately starves the
-    // encoder and audio stutters. 32MB lets yt-dlp download far ahead.
-    const buffer = new PassThrough({ highWaterMark: 1 << 25 });
-    proc.stdout.on('error', () => {});
-    buffer.on('error', () => {});
-    proc.stdout.pipe(buffer);
-    this.buffer = buffer;
-
-    const resource = createAudioResource(buffer, {
-      inputType: StreamType.Arbitrary,
-      inlineVolume: true,
-    });
-    resource.volume?.setVolume(this.volume);
-    this.resource = resource;
-    this.player.play(resource);
+    this.proc = stream.proc;
+    this.buffer = stream.buffer;
+    this.resource = stream.resource;
+    this.player.play(stream.resource);
   }
 
   private rememberUrl(url: string): void {
@@ -337,8 +281,8 @@ export class MusicSession {
     try {
       const picks = await this.fetchAutoplayTracks(seed, AUTOPLAY_TARGET - this.queue.length);
       if (picks.length) {
-        this.queue.push(...picks);
-        this.persist();
+        this.q.tracks.push(...picks);
+        this.q.persist();
         // If nothing is playing (radio had gone quiet), start it.
         if (this.current === null) void this.playNext();
       }
@@ -368,35 +312,19 @@ export class MusicSession {
   }
 
   shuffle(): void {
-    for (let i = this.queue.length - 1; i > 0; i--) {
-      // Shuffle randomness, not crypto.
-      // nosemgrep: ajinabraham.njsscan.crypto.crypto_node.node_insecure_random_generator
-      const j = Math.floor(Math.random() * (i + 1));
-      [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
-    }
-    this.persist();
+    this.q.shuffle();
   }
 
   removeAt(position: number): Track | null {
-    if (position < 1 || position > this.queue.length) return null;
-    const [removed] = this.queue.splice(position - 1, 1);
-    this.persist();
-    return removed;
+    return this.q.removeAt(position);
   }
 
   move(from: number, to: number): Track | null {
-    if (from < 1 || from > this.queue.length || to < 1 || to > this.queue.length) return null;
-    const [track] = this.queue.splice(from - 1, 1);
-    this.queue.splice(to - 1, 0, track);
-    this.persist();
-    return track;
+    return this.q.move(from, to);
   }
 
   clear(): number {
-    const n = this.queue.length;
-    this.queue.length = 0;
-    this.persist();
-    return n;
+    return this.q.clear();
   }
 
   pause(): boolean {
@@ -409,18 +337,18 @@ export class MusicSession {
 
   /** Full stop: wipe queue, current track, and persisted state, then leave. */
   stop(): void {
-    this.queue.length = 0;
-    this.current = null;
-    this.persist();
+    this.q.tracks.length = 0;
+    this.q.current = null;
+    this.q.persist();
     this.destroy();
   }
 
   destroy(): void {
     clearInterval(this.housekeeper);
-    this.persist();
+    this.q.persist();
     this.killProc();
-    this.queue.length = 0;
-    this.current = null;
+    this.q.tracks.length = 0;
+    this.q.current = null;
     if (this.connection.state.status !== VoiceConnectionStatus.Destroyed) {
       this.connection.destroy();
     }
