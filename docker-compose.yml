@@ -3,7 +3,9 @@ services:
     build: .
     image: camelo-discord-bot
     container_name: camelo-bot
-    restart: unless-stopped
+    # `always`: restarts on crash AND comes back when the Docker engine starts —
+    # even after a manual `compose stop` — so the bot survives reboots unattended.
+    restart: always
 
     # Secrets (DISCORD_TOKEN, CLIENT_ID, …) come from .env — never baked in.
     env_file:

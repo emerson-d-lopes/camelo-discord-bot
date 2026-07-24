@@ -259,6 +259,10 @@ Notes:
   screenshots) and **python3** (for yt-dlp) are installed in the image.
 - The stats dashboard is off by default; set `STATS_PORT` and uncomment the
   `ports` block in `docker-compose.yml` to expose it on `127.0.0.1`.
+- **Always-on**: the container uses `restart: always` — it comes back after a
+  crash and whenever the Docker engine starts. For unattended reboots on
+  Windows, keep Docker Desktop's *Start when you sign in* setting enabled (the
+  engine only runs inside a user session on the WSL2 backend).
 
 ## Configuration (`.env`)
 
