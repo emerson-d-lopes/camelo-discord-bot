@@ -1,8 +1,10 @@
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
-export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
+import { config } from './config.js';
+
+const OLLAMA_URL = config.ollamaUrl;
+export const OLLAMA_MODEL = config.ollamaModel;
 // Bigger, smarter model for open conversation (better recall, less flaky) —
 // the small model stays for fast intent classification.
-export const ASSISTANT_MODEL = process.env.ASSISTANT_MODEL || 'gemma4:12b';
+export const ASSISTANT_MODEL = config.assistantModel;
 
 let available: boolean | null = null;
 let lastCheck = 0;

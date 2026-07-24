@@ -1,11 +1,12 @@
 import { existsSync } from 'node:fs';
+import { config } from '../../config.js';
 import { assertPublicHttpUrl } from '../../security.js';
 import { startGuardedProxy } from './guardedProxy.js';
 
 // An explicit override (set by the Docker image) wins; otherwise probe the
 // usual Chrome/Chromium locations on Windows and Linux.
 const CHROME_PATHS = [
-  process.env.PUPPETEER_EXECUTABLE_PATH,
+  config.puppeteerExecutablePath,
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
   `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,

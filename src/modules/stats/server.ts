@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { Client } from 'discord.js';
+import { config } from '../../config.js';
 import { metricsSnapshot, prometheusText } from './index.js';
 
 /**
@@ -13,10 +14,9 @@ import { metricsSnapshot, prometheusText } from './index.js';
  *   GET /prometheus  → Prometheus exposition format
  */
 export function startStatsServer(client: Client): void {
-  const port = Number(process.env.STATS_PORT);
+  const port = config.stats.port;
   if (!port) return; // opt-in
-  const host = process.env.STATS_HOST || '127.0.0.1';
-  const token = process.env.STATS_TOKEN;
+  const { host, token } = config.stats;
 
   // A non-loopback bind exposes guild counts, memory, and host details to the
   // network — fail closed without a token rather than trusting a comment.

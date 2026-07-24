@@ -6,12 +6,13 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type { Command } from '../../commands.js';
+import { config } from '../../config.js';
 import { dbStats } from '../../db.js';
 import { ollamaStats } from '../../ollama.js';
 import { ssrfBlockCount } from '../../security.js';
 import { musicStats } from '../music/player.js';
 
-const OWNER_ID = process.env.OWNER_ID;
+const OWNER_ID = config.ownerId;
 
 function mib(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
