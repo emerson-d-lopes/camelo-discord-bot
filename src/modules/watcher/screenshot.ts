@@ -20,6 +20,20 @@ const CHROME_PATHS = [
 let inFlight = 0;
 const MAX_CONCURRENT = 1;
 
+// The browser renders attacker-controlled pages and, on Linux, runs without its
+// own sandbox (--no-sandbox), leaning on the container as the boundary. A child
+// process inherits the bot's environment by default — including DISCORD_TOKEN
+// (injected via env_file in Docker). Hand Chromium a copy with secrets stripped
+// so a renderer-parser exploit can't read them from /proc/self/environ.
+const SECRET_ENV_KEYS = new Set(['DISCORD_TOKEN', 'STATS_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN']);
+function scrubbedEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!SECRET_ENV_KEYS.has(k)) env[k] = v;
+  }
+  return env;
+}
+
 /**
  * Screenshot a product page with the locally installed Chrome (headless).
  * Returns null on any failure — alerts still go out without the image.
@@ -50,6 +64,7 @@ export async function screenshotPage(url: string): Promise<Buffer | null> {
     browser = await launch({
       executablePath,
       headless: true,
+      env: scrubbedEnv(),
       args: [
         '--no-first-run',
         '--disable-extensions',
