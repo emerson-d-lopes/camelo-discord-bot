@@ -354,9 +354,12 @@ export class MusicSession {
     return this.resource?.playbackDuration ?? 0;
   }
 
-  setVolume(percent: number): void {
-    this.volume = Math.min(200, Math.max(0, percent)) / 100;
+  /** Clamp to 0–200%, apply, and return the percent actually set. */
+  setVolume(percent: number): number {
+    const clamped = Math.min(200, Math.max(0, percent));
+    this.volume = clamped / 100;
     this.resource?.volume?.setVolume(this.volume);
+    return clamped;
   }
 
   skip(): void {

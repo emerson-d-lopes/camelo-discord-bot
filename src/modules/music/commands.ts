@@ -2,7 +2,6 @@ import {
   ChannelType,
   type ChatInputCommandInteraction,
   EmbedBuilder,
-  GuildMember,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
@@ -13,22 +12,23 @@ import { ephemeral } from '../../interactions.js';
 import { cappedText, safeFetch } from '../../security.js';
 import {
   type ActionReply,
+  listenersIn,
   nowPlayingEmbed,
   pauseAction,
   playAction,
   queueEmbed,
   resumeAction,
+  resumeOrRestoreAction,
   shuffleAction,
   skipAction,
   stopAction,
+  voiceChannelOf,
   volumeAction,
 } from './actions.js';
-import { getOrCreateSession, getSession, type LoopMode } from './player.js';
+import { getSession, type LoopMode } from './player.js';
 
 function memberVoiceChannel(interaction: ChatInputCommandInteraction) {
-  const member = interaction.member;
-  if (member instanceof GuildMember) return member.voice.channel;
-  return null;
+  return voiceChannelOf(interaction.member);
 }
 
 function sessionFor(interaction: ChatInputCommandInteraction) {
@@ -84,8 +84,7 @@ const skip: Command = {
     .setName('skip')
     .setDescription('Vote to skip the current song (requester skips instantly)'),
   async execute(interaction) {
-    const channel = memberVoiceChannel(interaction);
-    const listeners = channel ? channel.members.filter((m) => !m.user.bot).size : 1;
+    const listeners = listenersIn(memberVoiceChannel(interaction));
     await send(interaction, skipAction(sessionFor(interaction), interaction.user.id, listeners));
   },
 };
@@ -113,16 +112,8 @@ const resume: Command = {
       return;
     }
     await interaction.deferReply();
-    let joined;
-    try {
-      joined = await getOrCreateSession(channel);
-    } catch (err) {
-      await interaction.editReply(`❌ ${err instanceof Error ? err.message : 'Could not join voice.'}`);
-      return;
-    }
-    await interaction.editReply(
-      joined.resumeIfIdle() ? '▶️ Resuming the restored queue.' : 'Nothing to resume — queue is empty.',
-    );
+    const result = await resumeOrRestoreAction(undefined, channel);
+    await interaction.editReply({ content: result.text, allowedMentions: { parse: [] } });
   },
 };
 

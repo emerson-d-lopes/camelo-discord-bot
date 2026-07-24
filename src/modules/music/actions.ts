@@ -1,6 +1,24 @@
-import { EmbedBuilder, type VoiceBasedChannel } from 'discord.js';
+import { EmbedBuilder, GuildMember, type VoiceBasedChannel } from 'discord.js';
 import { mdLinkText } from '../../interactions.js';
 import { getOrCreateSession, type MusicSession, resolveTracks } from './player.js';
+
+/**
+ * The author's current voice channel, or null. Accepts the `member` of either
+ * entry point (interaction or message) — API-only members carry no voice state.
+ */
+export function voiceChannelOf(member: unknown): VoiceBasedChannel | null {
+  return member instanceof GuildMember ? member.voice.channel : null;
+}
+
+/** Humans in the channel (bots excluded); 1 when unknown so solo-skip rules apply. */
+export function listenersIn(channel: VoiceBasedChannel | null): number {
+  return channel ? channel.members.filter((m) => !m.user.bot).size : 1;
+}
+
+/** The one user-facing string for a failed voice join, shared by every entry point. */
+export function joinErrorText(err: unknown): string {
+  return `❌ ${err instanceof Error ? err.message : 'Could not join voice.'}`;
+}
 
 /**
  * Music actions shared by the slash commands and the natural-language message
@@ -53,6 +71,27 @@ export function resumeAction(session: MusicSession | undefined): ActionReply {
   return { text: 'Nothing to resume.', ephemeral: true };
 }
 
+/**
+ * Resume, joining the caller's channel first when no session exists (the
+ * post-restart case — joining restores the persisted queue).
+ */
+export async function resumeOrRestoreAction(
+  session: MusicSession | undefined,
+  channel: VoiceBasedChannel | null,
+): Promise<ActionReply> {
+  if (session) return resumeAction(session);
+  if (!channel) return { text: 'Nothing to resume.', ephemeral: true };
+  let joined: MusicSession;
+  try {
+    joined = await getOrCreateSession(channel);
+  } catch (err) {
+    return { text: joinErrorText(err), ephemeral: true };
+  }
+  return joined.resumeIfIdle()
+    ? { text: '▶️ Resuming the restored queue.' }
+    : { text: 'Nothing to resume — queue is empty.', ephemeral: true };
+}
+
 export function shuffleAction(session: MusicSession | undefined): ActionReply {
   if (!session || session.queue.length < 2) {
     return { text: 'Need at least 2 queued songs to shuffle.', ephemeral: true };
@@ -63,8 +102,7 @@ export function shuffleAction(session: MusicSession | undefined): ActionReply {
 
 export function volumeAction(session: MusicSession | undefined, target: number): ActionReply {
   if (!session) return NOT_PLAYING;
-  session.setVolume(target);
-  return { text: `🔊 Volume: ${Math.min(200, Math.max(0, target))}%` };
+  return { text: `🔊 Volume: ${session.setVolume(target)}%` };
 }
 
 function formatMs(ms: number): string {
@@ -127,7 +165,7 @@ export async function playAction(
   try {
     session = await getOrCreateSession(channel);
   } catch (err) {
-    return { text: `❌ ${err instanceof Error ? err.message : 'Could not join voice.'}`, ephemeral: true };
+    return { text: joinErrorText(err), ephemeral: true };
   }
 
   const restoredCount = session.queue.length;

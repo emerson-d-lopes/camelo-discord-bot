@@ -14,7 +14,9 @@ import { screenshotPage } from './screenshot.js';
 const DELAY_BETWEEN_REQUESTS_MS = 2_000;
 const FAILS_BEFORE_ALERT = 5;
 
-export function fmt(price: number, currency: string | null): string {
+/** Price for display — `'?'` for a watch with no successful check yet. */
+export function fmt(price: number | null, currency: string | null): string {
+  if (price === null) return '?';
   return `${currency ? `${currency} ` : ''}${price.toFixed(2)}`;
 }
 

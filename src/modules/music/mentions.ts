@@ -1,8 +1,10 @@
-import { type Client, Events, GuildMember, type Message } from 'discord.js';
+import { type Client, Events, type Message } from 'discord.js';
 import { getGuildSettings } from '../../db.js';
 import { rateAllow } from '../../security.js';
 import { converse, forgetChannel, isClearPhrase } from '../ai/converse.js';
 import {
+  joinErrorText,
+  listenersIn,
   pauseAction,
   playAction,
   queueEmbed,
@@ -10,6 +12,7 @@ import {
   shuffleAction,
   skipAction,
   stopAction,
+  voiceChannelOf,
   volumeAction,
 } from './actions.js';
 import { aiIntent, type Intent, ruleIntent } from './intent.js';
@@ -54,6 +57,11 @@ export function chunkMessage(text: string, limit = DISCORD_LIMIT): string[] {
  * music handler has no reason to mention anybody. Long answers are split across
  * multiple messages so nothing is truncated at Discord's 2000-char limit.
  */
+/** Typing indicator, ignoring channels that don't support it and API hiccups. */
+async function typing(message: Message): Promise<void> {
+  if ('sendTyping' in message.channel) await message.channel.sendTyping().catch(() => {});
+}
+
 async function reply(message: Message, content: string): Promise<void> {
   const chunks = chunkMessage(content);
   try {
@@ -127,7 +135,7 @@ async function handle(client: Client, message: Message): Promise<void> {
 
   // Dedicated chat channel = pure conversation (no music intent parsing).
   if (isChatChannel) {
-    if ('sendTyping' in message.channel) await message.channel.sendTyping().catch(() => {});
+    await typing(message);
     const name = message.member?.displayName ?? message.author.displayName;
     const answer = await converse(message.channelId, name, text);
     await reply(message, answer ?? 'My brain (Ollama) is offline right now.');
@@ -151,7 +159,7 @@ async function execute(message: Message, intent: Intent, tagged: boolean, text: 
   switch (intent.action) {
     case 'chat': {
       // Not a music command → hold an actual conversation, with per-channel memory.
-      if ('sendTyping' in message.channel) await message.channel.sendTyping().catch(() => {});
+      await typing(message);
       const name = message.member?.displayName ?? message.author.displayName;
       const answer = await converse(message.channelId, name, text);
       if (answer) await reply(message, answer);
@@ -159,8 +167,7 @@ async function execute(message: Message, intent: Intent, tagged: boolean, text: 
       return;
     }
     case 'skip': {
-      const channel = message.member instanceof GuildMember ? message.member.voice.channel : null;
-      const listeners = channel ? channel.members.filter((m) => !m.user.bot).size : 1;
+      const listeners = listenersIn(voiceChannelOf(message.member));
       return void reply(message, skipAction(session, userId, listeners).text);
     }
     case 'stop':
@@ -191,8 +198,8 @@ async function execute(message: Message, intent: Intent, tagged: boolean, text: 
       return void message.reply({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
     }
     case 'play': {
-      const channel = message.member instanceof GuildMember ? message.member.voice.channel : null;
-      if ('sendTyping' in message.channel) await message.channel.sendTyping().catch(() => {});
+      const channel = voiceChannelOf(message.member);
+      await typing(message);
       return void reply(message, (await playAction(channel, intent.query, userId)).text);
     }
     case 'recommend':
@@ -202,12 +209,12 @@ async function execute(message: Message, intent: Intent, tagged: boolean, text: 
 
 async function recommendRequest(message: Message, mood: string): Promise<void> {
   if (!message.guild) return;
-  const channel = message.member instanceof GuildMember ? message.member.voice.channel : null;
+  const channel = voiceChannelOf(message.member);
   if (!channel) {
     await reply(message, 'Join a voice channel first.');
     return;
   }
-  if ('sendTyping' in message.channel) await message.channel.sendTyping().catch(() => {});
+  await typing(message);
 
   const session = getSession(message.guild.id);
   const rec = await recommendTracks({
@@ -235,7 +242,7 @@ async function recommendRequest(message: Message, mood: string): Promise<void> {
   try {
     playSession = await getOrCreateSession(channel);
   } catch (err) {
-    await reply(message, `❌ ${err instanceof Error ? err.message : 'Could not join voice.'}`);
+    await reply(message, joinErrorText(err));
     return;
   }
   for (const track of rec.tracks) playSession.enqueue(track);

@@ -12,11 +12,7 @@ import {
 } from '../../db.js';
 import { mdLinkText } from '../../interactions.js';
 import { ScrapeError, scrapePrice } from './scraper.js';
-
-function fmt(price: number | null, currency: string | null): string {
-  if (price === null) return '?';
-  return `${currency ? `${currency} ` : ''}${price.toFixed(2)}`;
-}
+import { fmt } from './watcher.js';
 
 const SPARK = '▁▂▃▄▅▆▇█';
 
@@ -27,9 +23,16 @@ function sparkline(values: number[]): string {
   return values.map((v) => SPARK[Math.round(((v - min) / (max - min)) * (SPARK.length - 1))]).join('');
 }
 
-function ownWatch(interaction: Parameters<Command['execute']>[0], id: number) {
+/** The caller's watch by id, or null after sending the not-yours reply. */
+async function requireOwnWatch(interaction: Parameters<Command['execute']>[0], id: number) {
   const w = getWatch(id);
-  if (!w || w.user_id !== interaction.user.id) return null;
+  if (!w || w.user_id !== interaction.user.id) {
+    await interaction.reply({
+      content: `No watch #${id} belongs to you. Check \`/watchlist\`.`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return null;
+  }
   return w;
 }
 
@@ -148,14 +151,8 @@ const price: Command = {
     .addIntegerOption((o) => o.setName('id').setDescription('Watch id (see /watchlist)').setRequired(true)),
   async execute(interaction) {
     const id = interaction.options.getInteger('id', true);
-    const w = ownWatch(interaction, id);
-    if (!w) {
-      await interaction.reply({
-        content: `No watch #${id} belongs to you. Check \`/watchlist\`.`,
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
+    const w = await requireOwnWatch(interaction, id);
+    if (!w) return;
     await interaction.deferReply();
     try {
       const result = await scrapePrice(w.url, w.selector);
@@ -187,14 +184,8 @@ const history: Command = {
     .addIntegerOption((o) => o.setName('id').setDescription('Watch id (see /watchlist)').setRequired(true)),
   async execute(interaction) {
     const id = interaction.options.getInteger('id', true);
-    const w = ownWatch(interaction, id);
-    if (!w) {
-      await interaction.reply({
-        content: `No watch #${id} belongs to you. Check \`/watchlist\`.`,
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
+    const w = await requireOwnWatch(interaction, id);
+    if (!w) return;
     const points = priceHistory(id);
     if (points.length === 0) {
       await interaction.reply({ content: 'No history recorded yet.', flags: MessageFlags.Ephemeral });
@@ -254,14 +245,8 @@ const unwatch: Command = {
     .addIntegerOption((o) => o.setName('id').setDescription('Watch id (see /watchlist)').setRequired(true)),
   async execute(interaction) {
     const id = interaction.options.getInteger('id', true);
-    const w = ownWatch(interaction, id);
-    if (!w) {
-      await interaction.reply({
-        content: `No watch #${id} belongs to you. Check \`/watchlist\`.`,
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
+    const w = await requireOwnWatch(interaction, id);
+    if (!w) return;
     deleteWatch(id);
     await interaction.reply({ content: `🗑️ Stopped watching **${w.title}**.`, flags: MessageFlags.Ephemeral });
   },
