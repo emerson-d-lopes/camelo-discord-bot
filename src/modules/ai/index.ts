@@ -11,15 +11,23 @@ import { setChatChannel } from '../../db.js';
 import { OLLAMA_MODEL, ollamaAvailable, ollamaChat } from '../../ollama.js';
 import { forgetChannel } from './converse.js';
 
-// Discord embeds cap at 4096 chars.
+// Answer token budget; trimForEmbed separately enforces Discord's 4096-char embed cap.
 const MAX_TOKENS = 1024;
 
 const NO_AI_MSG = 'AI is not available — the local Ollama server is not running.';
 
-// Light spam guard: local inference still hogs the GPU/CPU.
+// Light spam guard: local inference still hogs the GPU/CPU, so /ask and
+// /summarize deliberately share one per-user cooldown.
 const COOLDOWN_MS = 15_000;
 const lastUse = new Map<string, number>();
 
+// Prune stale entries hourly so the map can't grow for the process lifetime.
+setInterval(() => {
+  const cutoff = Date.now() - COOLDOWN_MS;
+  for (const [k, t] of lastUse) if (t < cutoff) lastUse.delete(k);
+}, 3_600_000).unref();
+
+/** Non-null = rejection message. Consumes the cooldown slot when allowed. */
 function cooldownError(userId: string): string | null {
   const last = lastUse.get(userId) ?? 0;
   const waitMs = last + COOLDOWN_MS - Date.now();
@@ -38,13 +46,14 @@ const ask: Command = {
     .setDescription('Ask the local AI a question')
     .addStringOption((o) => o.setName('question').setDescription('Your question').setRequired(true)),
   async execute(interaction) {
+    // Availability first — an unavailable server must not burn the cooldown slot.
+    if (!(await ollamaAvailable())) {
+      await interaction.reply({ content: NO_AI_MSG, flags: MessageFlags.Ephemeral });
+      return;
+    }
     const cooldown = cooldownError(interaction.user.id);
     if (cooldown) {
       await interaction.reply({ content: cooldown, flags: MessageFlags.Ephemeral });
-      return;
-    }
-    if (!(await ollamaAvailable())) {
-      await interaction.reply({ content: NO_AI_MSG, flags: MessageFlags.Ephemeral });
       return;
     }
     const question = interaction.options.getString('question', true);
@@ -89,13 +98,14 @@ const summarize: Command = {
       await interaction.reply({ content: 'Text channels only.', flags: MessageFlags.Ephemeral });
       return;
     }
+    // Availability first — an unavailable server must not burn the cooldown slot.
+    if (!(await ollamaAvailable())) {
+      await interaction.reply({ content: NO_AI_MSG, flags: MessageFlags.Ephemeral });
+      return;
+    }
     const cooldown = cooldownError(interaction.user.id);
     if (cooldown) {
       await interaction.reply({ content: cooldown, flags: MessageFlags.Ephemeral });
-      return;
-    }
-    if (!(await ollamaAvailable())) {
-      await interaction.reply({ content: NO_AI_MSG, flags: MessageFlags.Ephemeral });
       return;
     }
     const count = interaction.options.getInteger('count') ?? 50;
