@@ -18,6 +18,15 @@ export function startStatsServer(client: Client): void {
   const host = process.env.STATS_HOST || '127.0.0.1';
   const token = process.env.STATS_TOKEN;
 
+  // A non-loopback bind exposes guild counts, memory, and host details to the
+  // network — fail closed without a token rather than trusting a comment.
+  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1' && !token) {
+    console.error(
+      `[stats] refusing to bind ${host}:${port} without STATS_TOKEN — dashboard disabled. Set STATS_TOKEN or use a loopback STATS_HOST.`,
+    );
+    return;
+  }
+
   const authorized = (url: URL, header: string | undefined): boolean => {
     if (!token) return true;
     const given = header?.replace(/^Bearer\s+/i, '') ?? url.searchParams.get('token') ?? '';

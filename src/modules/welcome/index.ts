@@ -16,11 +16,14 @@ export function startWelcome(client: Client): void {
     try {
       const channel = await member.guild.channels.fetch(settings.welcome_channel_id);
       if (channel?.isSendable()) {
-        await channel.send(
-          settings.welcome_message
+        await channel.send({
+          content: settings.welcome_message
             .replaceAll('{user}', `<@${member.id}>`)
             .replaceAll('{server}', member.guild.name),
-        );
+          // The template is set by Manage Server, who may lack Mention Everyone —
+          // only the {user} mention may resolve, nothing typed into the template.
+          allowedMentions: { parse: [], users: [member.id] },
+        });
       }
     } catch (err) {
       console.warn('[welcome] failed to send welcome message:', err);
