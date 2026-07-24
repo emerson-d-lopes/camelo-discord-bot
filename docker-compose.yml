@@ -20,9 +20,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-    # SQLite database persists on the host across container rebuilds.
+    # SQLite lives in a Docker-managed volume — data stays inside Docker, not on
+    # the host filesystem, and survives container rebuilds/removal.
     volumes:
-      - ./data:/app/data
+      - botdata:/app/data
 
     # --- containment (the reason for dockerizing) ---
     security_opt:
@@ -42,3 +43,6 @@ services:
     # Optional local stats dashboard: set STATS_PORT in .env, then uncomment.
     # ports:
     #   - "127.0.0.1:${STATS_PORT}:${STATS_PORT}"
+
+volumes:
+  botdata:
