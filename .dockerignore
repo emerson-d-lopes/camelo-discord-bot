@@ -1,0 +1,16 @@
+node_modules
+data
+.env
+.env.*
+!.env.example
+.git
+.github
+*.log
+dist
+build
+.vscode
+.idea
+npm-debug.log*
+pnpm-debug.log*
+README.md
+SECURITY.md

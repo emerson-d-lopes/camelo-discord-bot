@@ -1,0 +1,44 @@
+services:
+  bot:
+    build: .
+    image: camelo-discord-bot
+    container_name: camelo-bot
+    restart: unless-stopped
+
+    # Secrets (DISCORD_TOKEN, CLIENT_ID, …) come from .env — never baked in.
+    env_file:
+      - .env
+
+    environment:
+      # Inside the container 127.0.0.1 is the container itself, so the default
+      # Ollama URL won't reach the host. Point at the host's Ollama instead.
+      # (Override in .env if Ollama runs elsewhere.)
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+
+    # Lets host.docker.internal resolve on Linux hosts. Docker Desktop
+    # (Windows/Mac) already provides it; this line is harmless there.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # SQLite database persists on the host across container rebuilds.
+    volumes:
+      - ./data:/app/data
+
+    # --- containment (the reason for dockerizing) ---
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Chromium wants shared memory but we pass --disable-dev-shm-usage; a small
+    # tmpfs for scratch keeps the rest of the filesystem clean.
+    tmpfs:
+      - /tmp
+
+    # Resource ceilings so a runaway (or abuse) can't starve the host.
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 512
+
+    # Optional local stats dashboard: set STATS_PORT in .env, then uncomment.
+    # ports:
+    #   - "127.0.0.1:${STATS_PORT}:${STATS_PORT}"

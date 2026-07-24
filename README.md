@@ -233,6 +233,31 @@ Each earns its place by removing a specific failure mode or duplication.
    pnpm dev                      # run with auto-reload
    ```
 
+## Run with Docker
+
+The bot ships a hardened container (non-root, all Linux capabilities dropped,
+`no-new-privileges`, memory/CPU/pids ceilings) so it runs isolated from the host
+instead of as a bare process.
+
+```powershell
+Copy-Item .env.example .env   # fill in DISCORD_TOKEN, CLIENT_ID, GUILD_ID
+docker compose up -d --build
+docker compose exec bot pnpm register   # one-time: register slash commands
+docker compose logs -f                  # watch startup / confirm login
+```
+
+Notes:
+
+- **Ollama runs on the host**, not in the container. Compose points
+  `OLLAMA_URL` at `host.docker.internal:11434` automatically — just keep Ollama
+  running on the host (`ollama serve`) and pull the models
+  (`ollama pull llama3.2:3b`, `ollama pull gemma4:12b`).
+- **Data persists** in `./data` (SQLite), bind-mounted into the container.
+- **ffmpeg** is bundled (`ffmpeg-static`); **Chromium** (for price-watcher
+  screenshots) and **python3** (for yt-dlp) are installed in the image.
+- The stats dashboard is off by default; set `STATS_PORT` and uncomment the
+  `ports` block in `docker-compose.yml` to expose it on `127.0.0.1`.
+
 ## Configuration (`.env`)
 
 | Variable | Purpose |
@@ -241,8 +266,10 @@ Each earns its place by removing a specific failure mode or duplication.
 | `CLIENT_ID` | Application ID (required to register commands) |
 | `GUILD_ID` | Server id — registers commands instantly to one server; empty = global (~1h) |
 | `CHECK_INTERVAL_MINUTES` | Default price-check interval (30) |
-| `OLLAMA_URL` | Ollama server (`http://127.0.0.1:11434`) |
+| `OLLAMA_URL` | Ollama server (`http://127.0.0.1:11434`; Docker uses `host.docker.internal`) |
 | `OLLAMA_MODEL` | Model for intent, DJ, and `/ask` (`llama3.2:3b`) |
+| `ASSISTANT_MODEL` | Bigger model for open conversation (`gemma4:12b`) |
+| `PUPPETEER_EXECUTABLE_PATH` | Chrome/Chromium path for screenshots (auto on desktop; set in Docker) |
 
 ## Security
 

@@ -2,11 +2,17 @@ import { existsSync } from 'node:fs';
 import { assertPublicHttpUrl } from '../../security.js';
 import { startGuardedProxy } from './guardedProxy.js';
 
+// An explicit override (set by the Docker image) wins; otherwise probe the
+// usual Chrome/Chromium locations on Windows and Linux.
 const CHROME_PATHS = [
+  process.env.PUPPETEER_EXECUTABLE_PATH,
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
   `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
-];
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/google-chrome',
+].filter((p): p is string => typeof p === 'string' && p.length > 0);
 
 // One screenshot at a time across the whole process. The watcher loop is
 // already serial, but this hard-caps concurrency even if that changes, so a
@@ -50,6 +56,10 @@ export async function screenshotPage(url: string): Promise<Buffer | null> {
         '--mute-audio',
         '--disable-gpu',
         '--disable-dev-shm-usage',
+        // Chromium's own sandbox needs user namespaces that a hardened container
+        // usually blocks; JS is off and all traffic goes through the guarded
+        // proxy, so drop it on Linux (containers) but keep it on the desktop.
+        ...(process.platform === 'win32' ? [] : ['--no-sandbox', '--disable-setuid-sandbox']),
         `--proxy-server=http://127.0.0.1:${proxy.port}`,
         '--proxy-bypass-list=<-loopback>',
       ],
