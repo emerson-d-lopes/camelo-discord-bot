@@ -111,11 +111,11 @@ async function tryMercadoLivre(url: string): Promise<ScrapeResult | null> {
   const id = url.match(/(ML[A-Z])-?(\d{6,})/i);
   if (!id) return null;
   try {
-    const res = await fetch(`https://api.mercadolibre.com/items/${id[1].toUpperCase()}${id[2]}`, {
+    const res = await safeFetch(`https://api.mercadolibre.com/items/${id[1].toUpperCase()}${id[2]}`, {
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null;
-    const item = (await res.json()) as MlItem;
+    const item = JSON.parse(await cappedText(res, 256 * 1024)) as MlItem;
     if (typeof item.price !== 'number' || item.price <= 0) return null;
     return {
       price: item.price,

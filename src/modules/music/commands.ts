@@ -10,7 +10,7 @@ import {
 import type { Command } from '../../commands.js';
 import { setMusicChannel } from '../../db.js';
 import { ephemeral } from '../../interactions.js';
-import { cappedText } from '../../security.js';
+import { cappedText, safeFetch } from '../../security.js';
 import {
   type ActionReply,
   nowPlayingEmbed,
@@ -308,7 +308,7 @@ const lyrics: Command = {
       .replace(/\[.*?\]/g, '')
       .trim();
     try {
-      const res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(cleaned)}`, {
+      const res = await safeFetch(`https://lrclib.net/api/search?q=${encodeURIComponent(cleaned)}`, {
         headers: { 'user-agent': 'camelo-discord-bot' },
         signal: AbortSignal.timeout(10_000),
       });

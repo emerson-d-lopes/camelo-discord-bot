@@ -15,7 +15,7 @@ import {
 import type { Client, VoiceBasedChannel } from 'discord.js';
 import { youtubeDl } from 'youtube-dl-exec';
 import { loadMusicState, recordPlay, saveMusicState } from '../../db.js';
-import { cappedText, isAllowedMediaUrl } from '../../security.js';
+import { cappedText, isAllowedMediaUrl, safeFetch } from '../../security.js';
 
 export interface Track {
   title: string;
@@ -247,6 +247,17 @@ export class MusicSession {
     }
     // Fill the radio buffer ahead of time so the queue never runs dry mid-song.
     void this.topUp();
+
+    // Playlist entries carry whatever webpage_url yt-dlp reported for them —
+    // re-check the allowlist at spawn time so only approved hosts are played.
+    // (`ytsearch1:` placeholders are not URLs and skip this check.)
+    if (/^https?:\/\//i.test(next.url) && !isAllowedMediaUrl(next.url)) {
+      console.warn(`[music] dropping track with non-allowlisted url: ${next.url}`);
+      this.current = null;
+      this.persist();
+      // Don't stall — the playNext() finally-guard advances to the next track.
+      return;
+    }
 
     const proc = youtubeDl.exec(
       next.url,
@@ -510,11 +521,11 @@ function entryUrl(entry: YtEntry): string | null {
 
 /** Resolve a Spotify track link into a YouTube search query via the public oEmbed endpoint. */
 async function spotifyToQuery(url: string): Promise<string> {
-  const res = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`, {
+  const res = await safeFetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`, {
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error('Could not read that Spotify link.');
-  const data = (await res.json()) as { title?: string };
+  const data = JSON.parse(await cappedText(res, 256 * 1024)) as { title?: string };
   if (!data.title) throw new Error('Could not read that Spotify link.');
   return data.title;
 }
@@ -552,7 +563,7 @@ function findTrackList(node: unknown): SpotifyEmbedEntry[] | null {
 async function spotifyPlaylistTracks(url: string, requestedBy: string): Promise<Track[]> {
   const m = url.match(/open\.spotify\.com\/(playlist|album)\/([A-Za-z0-9]+)/i);
   if (!m) throw new Error('Could not parse that Spotify link.');
-  const res = await fetch(`https://open.spotify.com/embed/${m[1].toLowerCase()}/${m[2]}`, {
+  const res = await safeFetch(`https://open.spotify.com/embed/${m[1].toLowerCase()}/${m[2]}`, {
     headers: {
       'user-agent':
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
