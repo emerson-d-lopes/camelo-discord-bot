@@ -10,10 +10,12 @@ import { startGuardedProxy } from '../src/modules/watcher/guardedProxy.js';
 import { parsePriceText } from '../src/modules/watcher/scraper.js';
 import {
   assertPublicHttpUrl,
+  cappedText,
   hostIsPrivate,
   isAllowedMediaUrl,
   isHttpUrl,
   pinPublicHost,
+  rateAllow,
   ssrfBlockCount,
 } from '../src/security.js';
 
@@ -112,6 +114,22 @@ test('SQL injection — reminder message is bound, not executed', () => {
   } finally {
     deleteReminder(id);
   }
+});
+
+test('rateAllow — burst consumed, then denied; keys independent', () => {
+  // Burst of 2: two calls pass, the third is denied (refill is 2/min — far
+  // slower than this test runs).
+  assert.equal(rateAllow('test-ra-a', 2, 2), true);
+  assert.equal(rateAllow('test-ra-a', 2, 2), true);
+  assert.equal(rateAllow('test-ra-a', 2, 2), false);
+  // A different key has its own bucket.
+  assert.equal(rateAllow('test-ra-b', 2, 2), true);
+});
+
+test('cappedText — reads small bodies, rejects oversized ones', async () => {
+  assert.equal(await cappedText(new Response('hello')), 'hello');
+  assert.equal(await cappedText(new Response(null)), '');
+  await assert.rejects(cappedText(new Response('x'.repeat(100)), 10), /too large/i);
 });
 
 test('isAllowedMediaUrl — /play allowlist gate', () => {

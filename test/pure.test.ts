@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Watch } from '../src/db.js';
+import { db, type Watch } from '../src/db.js';
 import { isClearPhrase } from '../src/modules/ai/converse.js';
 import { parseDiceSpec } from '../src/modules/fun/index.js';
 import { skipAction } from '../src/modules/music/actions.js';
 import { ruleIntent } from '../src/modules/music/intent.js';
 import { chunkMessage } from '../src/modules/music/mentions.js';
 import { formatDuration, type MusicSession } from '../src/modules/music/player.js';
+import { type Track, TrackQueue } from '../src/modules/music/queue.js';
 import { parseDuration } from '../src/modules/reminders/index.js';
 import { humanDuration, type MetricsSnapshot, prometheusText } from '../src/modules/stats/index.js';
 import { sparkline } from '../src/modules/watcher/commands.js';
@@ -223,6 +224,72 @@ test('humanDuration / prometheusText — formatters', () => {
   assert.ok(text.includes('camelo_guilds 2\n'));
   assert.ok(text.includes('camelo_ssrf_blocks 1\n'));
   assert.ok(text.endsWith('\n'));
+});
+
+const TEST_GUILD = 'test-queue-guild';
+
+function track(title: string): Track {
+  return { title, url: `https://youtu.be/${title}`, duration: '3:00', requestedBy: 'u' };
+}
+
+test('TrackQueue — pickNext honours loop modes and skip', () => {
+  try {
+    const q = new TrackQueue(TEST_GUILD);
+    const [a, b] = [track('a'), track('b')];
+    q.tracks.push(a, b);
+
+    // off: plain shift
+    assert.deepEqual(q.pickNext(false), { track: a, repeated: false });
+    q.current = a;
+
+    // track loop repeats the current song…
+    q.loopMode = 'track';
+    assert.deepEqual(q.pickNext(false), { track: a, repeated: true });
+    // …but an explicit skip advances past it
+    assert.deepEqual(q.pickNext(true), { track: b, repeated: false });
+    q.current = b;
+
+    // queue loop cycles the finished song to the back
+    q.loopMode = 'queue';
+    q.tracks.push(track('c'));
+    const pick = q.pickNext(false);
+    assert.equal(pick.track?.title, 'c');
+    assert.deepEqual(
+      q.tracks.map((t) => t.title),
+      ['b'],
+    ); // b re-queued at the back
+  } finally {
+    db.prepare('DELETE FROM music_state WHERE guild_id = ?').run(TEST_GUILD);
+  }
+});
+
+test('TrackQueue — queue survives a restart (persistence round-trip)', () => {
+  try {
+    const q1 = new TrackQueue(TEST_GUILD);
+    q1.push(track('one'));
+    q1.push(track('two'));
+    q1.loopMode = 'queue';
+    q1.persist();
+
+    const q2 = new TrackQueue(TEST_GUILD);
+    assert.deepEqual(
+      q2.tracks.map((t) => t.title),
+      ['one', 'two'],
+    );
+    assert.equal(q2.loopMode, 'queue');
+    assert.equal(q2.autoplay, true); // autoplay deliberately not restored
+
+    // The current track goes back to the front so a restart resumes with it.
+    q2.current = q2.tracks.shift() ?? null;
+    q2.persist();
+    const q3 = new TrackQueue(TEST_GUILD);
+    assert.deepEqual(
+      q3.tracks.map((t) => t.title),
+      ['one', 'two'],
+    );
+  } finally {
+    db.prepare('DELETE FROM music_state WHERE guild_id = ?').run(TEST_GUILD);
+  }
 });
 
 function fakeSession(requestedBy: string) {
