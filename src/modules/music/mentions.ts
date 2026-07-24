@@ -102,7 +102,10 @@ async function handle(client: Client, message: Message): Promise<void> {
   const settings = getGuildSettings(message.guild.id);
   const isMusicChannel = settings?.music_channel_id === message.channelId;
   const isChatChannel = settings?.chat_channel_id === message.channelId;
-  const tagged = new RegExp(`<@!?${client.user.id}>`).test(message.content);
+  // Literal string checks for the two mention forms — no RegExp built from
+  // runtime data, however trusted the bot's own id is.
+  const botId = client.user.id;
+  const tagged = message.content.includes(`<@${botId}>`) || message.content.includes(`<@!${botId}>`);
 
   // Answer freely in the music/chat channels; elsewhere only when tagged or
   // when the user replies to one of the bot's messages.

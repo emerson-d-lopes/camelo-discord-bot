@@ -1,6 +1,8 @@
 import * as cheerio from 'cheerio';
 import { assertPublicHttpUrl, cappedText, safeFetch } from '../../security.js';
 
+// Ordinary desktop-browser UA for sites that block obvious bots — not a credential.
+// nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_username
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
@@ -60,7 +62,7 @@ interface JsonLdPrice {
   currency: string | null;
 }
 
-function findJsonLdPrice(node: unknown): JsonLdPrice | null {
+export function findJsonLdPrice(node: unknown): JsonLdPrice | null {
   if (Array.isArray(node)) {
     for (const item of node) {
       const found = findJsonLdPrice(item);

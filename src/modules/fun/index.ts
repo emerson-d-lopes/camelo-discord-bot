@@ -70,6 +70,8 @@ const roll: Command = {
       return;
     }
     const { count, sides, mod } = parsed;
+    // Game dice, not crypto.
+    // nosemgrep: ajinabraham.njsscan.crypto.crypto_node.node_insecure_random_generator
     const rolls = Array.from({ length: count }, () => 1 + Math.floor(Math.random() * sides));
     const total = rolls.reduce((a, b) => a + b, 0) + mod;
     const detail =

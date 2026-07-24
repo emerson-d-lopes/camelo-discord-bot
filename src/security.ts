@@ -42,6 +42,12 @@ const MEDIA_HOSTS = new Set([
   'on.soundcloud.com',
 ]);
 
+/** Case-insensitive http(s)-prefix check without building a regex. */
+export function isHttpUrl(s: string): boolean {
+  const head = s.slice(0, 8).toLowerCase();
+  return head.startsWith('http://') || head.startsWith('https://');
+}
+
 /** Only well-known media hosts may be handed to yt-dlp as URLs. */
 export function isAllowedMediaUrl(raw: string): boolean {
   try {

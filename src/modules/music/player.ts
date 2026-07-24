@@ -15,7 +15,7 @@ import {
 import type { Client, VoiceBasedChannel } from 'discord.js';
 import { youtubeDl } from 'youtube-dl-exec';
 import { loadMusicState, recordPlay, saveMusicState } from '../../db.js';
-import { cappedText, isAllowedMediaUrl, safeFetch } from '../../security.js';
+import { cappedText, isAllowedMediaUrl, isHttpUrl, safeFetch } from '../../security.js';
 
 export interface Track {
   title: string;
@@ -251,7 +251,7 @@ export class MusicSession {
     // Playlist entries carry whatever webpage_url yt-dlp reported for them —
     // re-check the allowlist at spawn time so only approved hosts are played.
     // (`ytsearch1:` placeholders are not URLs and skip this check.)
-    if (/^https?:\/\//i.test(next.url) && !isAllowedMediaUrl(next.url)) {
+    if (isHttpUrl(next.url) && !isAllowedMediaUrl(next.url)) {
       console.warn(`[music] dropping track with non-allowlisted url: ${next.url}`);
       this.current = null;
       this.persist();
@@ -369,6 +369,8 @@ export class MusicSession {
 
   shuffle(): void {
     for (let i = this.queue.length - 1; i > 0; i--) {
+      // Shuffle randomness, not crypto.
+      // nosemgrep: ajinabraham.njsscan.crypto.crypto_node.node_insecure_random_generator
       const j = Math.floor(Math.random() * (i + 1));
       [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
     }
@@ -503,7 +505,7 @@ export async function getOrCreateSession(channel: VoiceBasedChannel): Promise<Mu
   return session;
 }
 
-interface YtEntry {
+export interface YtEntry {
   id?: string;
   title?: string;
   webpage_url?: string;
@@ -513,11 +515,11 @@ interface YtEntry {
 
 const PLAYLIST_MAX = 25;
 
-function entryUrl(entry: YtEntry): string | null {
+export function entryUrl(entry: YtEntry): string | null {
   // Only accept http(s) URLs from yt-dlp's output — never let a non-URL string
   // (which could be read as a yt-dlp flag) reach the play spawn unvalidated.
-  if (entry.webpage_url && /^https?:\/\//i.test(entry.webpage_url)) return entry.webpage_url;
-  if (entry.url && /^https?:\/\//i.test(entry.url)) return entry.url;
+  if (entry.webpage_url && isHttpUrl(entry.webpage_url)) return entry.webpage_url;
+  if (entry.url && isHttpUrl(entry.url)) return entry.url;
   if (entry.id) return `https://www.youtube.com/watch?v=${entry.id}`;
   return null;
 }
@@ -601,17 +603,18 @@ async function spotifyPlaylistTracks(url: string, requestedBy: string): Promise<
 /** Resolve a search query, video URL, playlist/mix URL, or Spotify track link into tracks. */
 export async function resolveTracks(query: string, requestedBy: string): Promise<Track[]> {
   let effective = query;
-  if (/^https?:\/\/open\.spotify\.com\//i.test(query)) {
-    if (/\/(playlist|album)\//i.test(query)) {
+  const q = query.toLowerCase();
+  if (q.startsWith('https://open.spotify.com/') || q.startsWith('http://open.spotify.com/')) {
+    if (q.includes('/playlist/') || q.includes('/album/')) {
       return spotifyPlaylistTracks(query, requestedBy);
     }
     effective = await spotifyToQuery(query);
   }
-  const isUrl = /^https?:\/\//i.test(effective);
+  const isUrl = isHttpUrl(effective);
   if (isUrl && !isAllowedMediaUrl(effective)) {
     throw new Error('Only YouTube, Spotify, and SoundCloud links are allowed — or just type a song name.');
   }
-  const isPlaylist = isUrl && /[?&]list=/.test(effective);
+  const isPlaylist = isUrl && (effective.includes('?list=') || effective.includes('&list='));
   const raw = await withYtdlpSlot(() =>
     youtubeDl(isUrl ? effective : `ytsearch1:${effective.slice(0, 200)}`, {
       dumpSingleJson: true,
