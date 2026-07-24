@@ -1,5 +1,8 @@
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
+// Bigger, smarter model for open conversation (better recall, less flaky) —
+// the small model stays for fast intent classification.
+export const ASSISTANT_MODEL = process.env.ASSISTANT_MODEL || 'gemma4:12b';
 
 let available: boolean | null = null;
 let lastCheck = 0;
@@ -43,11 +46,18 @@ export interface ChatTurn {
   content: string;
 }
 
-export async function ollamaChat(
-  system: string,
-  user: string,
-  opts: { format?: object; maxTokens?: number; timeoutMs?: number } = {},
-): Promise<string> {
+export interface ChatOpts {
+  format?: object;
+  maxTokens?: number;
+  timeoutMs?: number;
+  model?: string;
+  // For reasoning models (e.g. gemma4): false disables the thinking phase, which
+  // would otherwise eat the whole token budget and leave `content` empty. Only
+  // sent when defined — non-thinking models reject an unexpected `think` field.
+  think?: boolean;
+}
+
+export async function ollamaChat(system: string, user: string, opts: ChatOpts = {}): Promise<string> {
   return ollamaChatMessages(system, [{ role: 'user', content: user }], opts);
 }
 
@@ -55,7 +65,7 @@ export async function ollamaChat(
 export async function ollamaChatMessages(
   system: string,
   turns: ChatTurn[],
-  opts: { format?: object; maxTokens?: number; timeoutMs?: number } = {},
+  opts: ChatOpts = {},
 ): Promise<string> {
   if (inFlight >= MAX_CONCURRENT) throw new OllamaBusyError('Ollama is busy');
   inFlight++;
@@ -66,19 +76,16 @@ export async function ollamaChatMessages(
   }
 }
 
-async function chatInner(
-  system: string,
-  turns: ChatTurn[],
-  opts: { format?: object; maxTokens?: number; timeoutMs?: number } = {},
-): Promise<string> {
+async function chatInner(system: string, turns: ChatTurn[], opts: ChatOpts = {}): Promise<string> {
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      model: OLLAMA_MODEL,
+      model: opts.model ?? OLLAMA_MODEL,
       stream: false,
       messages: [{ role: 'system', content: system }, ...turns],
       ...(opts.format ? { format: opts.format } : {}),
+      ...(opts.think !== undefined ? { think: opts.think } : {}),
       keep_alive: '30m',
       // Conversation wants a little variety; structured/intent calls stay at 0.
       options: { num_predict: opts.maxTokens ?? 512, temperature: opts.format ? 0 : 0.6 },

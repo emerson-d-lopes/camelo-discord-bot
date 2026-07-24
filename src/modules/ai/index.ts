@@ -1,5 +1,13 @@
-import { EmbedBuilder, MessageFlags, SlashCommandBuilder, TextChannel } from 'discord.js';
+import {
+  ChannelType,
+  EmbedBuilder,
+  MessageFlags,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+  TextChannel,
+} from 'discord.js';
 import type { Command } from '../../commands.js';
+import { setChatChannel } from '../../db.js';
 import { OLLAMA_MODEL, ollamaAvailable, ollamaChat } from '../../ollama.js';
 import { forgetChannel } from './converse.js';
 
@@ -143,4 +151,40 @@ const forget: Command = {
   },
 };
 
-export const aiCommands: Command[] = [ask, summarize, forget];
+const chatchannel: Command = {
+  data: new SlashCommandBuilder()
+    .setName('chatchannel')
+    .setDescription('Designate a channel where every message chats with the bot (needs Manage Server)')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((s) =>
+      s
+        .setName('set')
+        .setDescription('Enable for a channel')
+        .addChannelOption((o) =>
+          o
+            .setName('channel')
+            .setDescription('The chat channel')
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true),
+        ),
+    )
+    .addSubcommand((s) => s.setName('off').setDescription('Disable the chat channel')),
+  async execute(interaction) {
+    if (!interaction.guildId) {
+      await interaction.reply({ content: 'Server-only command.', flags: MessageFlags.Ephemeral });
+      return;
+    }
+    if (interaction.options.getSubcommand() === 'off') {
+      setChatChannel(interaction.guildId, null);
+      await interaction.reply({ content: 'Chat channel disabled.', flags: MessageFlags.Ephemeral });
+      return;
+    }
+    const channel = interaction.options.getChannel('channel', true);
+    setChatChannel(interaction.guildId, channel.id);
+    await interaction.reply(
+      `💬 <#${channel.id}> is now the chat channel — every message there talks to me (with memory; \`/forget\` to clear).`,
+    );
+  },
+};
+
+export const aiCommands: Command[] = [ask, summarize, forget, chatchannel];
