@@ -44,7 +44,7 @@ export function stopWatcher(): void {
   clearInterval(interval);
 }
 
-function isDue(watch: Watch): boolean {
+export function isDue(watch: Watch): boolean {
   if (!watch.last_checked) return true;
   const interval = watch.interval_minutes ?? config.checkIntervalMinutes;
   const last = Date.parse(`${watch.last_checked.replace(' ', 'T')}Z`);

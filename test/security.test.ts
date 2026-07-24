@@ -2,10 +2,20 @@ import assert from 'node:assert/strict';
 import { connect } from 'node:net';
 import { test } from 'node:test';
 import { deleteReminder, insertReminder, listReminders, totalReminders } from '../src/db.js';
+import { mdLinkText } from '../src/interactions.js';
+import { normalize } from '../src/modules/music/intent.js';
+import { entryUrl } from '../src/modules/music/player.js';
 import { parseDuration } from '../src/modules/reminders/index.js';
 import { startGuardedProxy } from '../src/modules/watcher/guardedProxy.js';
 import { parsePriceText } from '../src/modules/watcher/scraper.js';
-import { assertPublicHttpUrl, hostIsPrivate, pinPublicHost, ssrfBlockCount } from '../src/security.js';
+import {
+  assertPublicHttpUrl,
+  hostIsPrivate,
+  isAllowedMediaUrl,
+  isHttpUrl,
+  pinPublicHost,
+  ssrfBlockCount,
+} from '../src/security.js';
 
 test('hostIsPrivate — literal private / localhost blocked, public allowed', async () => {
   for (const h of ['127.0.0.1', '10.0.0.5', '192.168.1.1', '172.16.0.1', '169.254.169.254', '::1']) {
@@ -102,6 +112,67 @@ test('SQL injection — reminder message is bound, not executed', () => {
   } finally {
     deleteReminder(id);
   }
+});
+
+test('isAllowedMediaUrl — /play allowlist gate', () => {
+  for (const url of [
+    'https://www.youtube.com/watch?v=abc',
+    'https://youtu.be/abc',
+    'https://music.youtube.com/watch?v=abc',
+    'https://open.spotify.com/track/xyz',
+    'https://soundcloud.com/artist/track',
+    'https://on.soundcloud.com/xyz',
+    'https://YOUTUBE.COM/watch?v=abc', // hostname case-insensitive
+  ]) {
+    assert.equal(isAllowedMediaUrl(url), true, url);
+  }
+  for (const url of [
+    'https://evil.com/watch?v=abc',
+    'https://youtube.com.evil.com/x', // suffix spoof
+    'https://notyoutube.com/x',
+    'ftp://youtube.com/x', // non-http scheme
+    'file:///etc/passwd',
+    'youtube.com/watch', // not a URL at all
+    '--dump-json', // yt-dlp flag masquerading as input
+    '',
+  ]) {
+    assert.equal(isAllowedMediaUrl(url), false, url);
+  }
+});
+
+test('isHttpUrl — http(s) prefix only, case-insensitive', () => {
+  assert.equal(isHttpUrl('https://x.com'), true);
+  assert.equal(isHttpUrl('HTTP://x.com'), true);
+  assert.equal(isHttpUrl('ytsearch1:song name'), false);
+  assert.equal(isHttpUrl('file:///etc/passwd'), false);
+  assert.equal(isHttpUrl('--flag'), false);
+});
+
+test('entryUrl — only http(s) strings from yt-dlp output reach the play spawn', () => {
+  assert.equal(entryUrl({ webpage_url: 'https://youtube.com/watch?v=a' }), 'https://youtube.com/watch?v=a');
+  assert.equal(entryUrl({ url: 'https://soundcloud.com/a/b' }), 'https://soundcloud.com/a/b');
+  // A non-URL string (could be read as a yt-dlp flag) is skipped, not passed through.
+  assert.equal(entryUrl({ webpage_url: '--exec=calc', url: 'https://youtu.be/a' }), 'https://youtu.be/a');
+  assert.equal(entryUrl({ id: 'abc123' }), 'https://www.youtube.com/watch?v=abc123');
+  assert.equal(entryUrl({ webpage_url: 'ftp://evil/x' }), null);
+  assert.equal(entryUrl({}), null);
+});
+
+test('normalize — LLM intent output is schema-defended', () => {
+  // play with no query would enqueue garbage → downgraded to chat
+  assert.deepEqual(normalize({ action: 'play' }), { action: 'chat' });
+  assert.deepEqual(normalize({ action: 'play', query: 'raul' }), { action: 'play', query: 'raul' });
+  // an action outside the known set (model ignored the schema) does nothing
+  assert.deepEqual(normalize({ action: 'rm -rf /' as never }), { action: 'chat' });
+  assert.deepEqual(normalize({ action: 'volume_set' }), { action: 'volume_set', volume: 100 });
+  assert.deepEqual(normalize({ action: 'recommend' }), { action: 'recommend', query: '' });
+  assert.deepEqual(normalize({ action: 'skip' }), { action: 'skip' });
+});
+
+test('mdLinkText — untrusted titles cannot break out of [label](url) links', () => {
+  assert.equal(mdLinkText('x](https://evil)'), 'x\\]\\(https://evil\\)');
+  assert.equal(mdLinkText('[click me]'), '\\[click me\\]');
+  assert.equal(mdLinkText('plain title'), 'plain title');
 });
 
 /** Open a raw socket to the proxy, issue a CONNECT, return the first status line. */

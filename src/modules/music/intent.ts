@@ -128,7 +128,7 @@ const SIMPLE_ACTIONS = new Set([
   'chat',
 ]);
 
-function normalize(parsed: { action: Intent['action']; query?: string; volume?: number }): Intent {
+export function normalize(parsed: { action: Intent['action']; query?: string; volume?: number }): Intent {
   if (parsed.action === 'play') {
     return parsed.query ? { action: 'play', query: parsed.query } : { action: 'chat' };
   }

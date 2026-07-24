@@ -18,7 +18,7 @@ function mib(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-function humanDuration(sec: number): string {
+export function humanDuration(sec: number): string {
   const d = Math.floor(sec / 86_400);
   const h = Math.floor((sec % 86_400) / 3600);
   const m = Math.floor((sec % 3600) / 60);

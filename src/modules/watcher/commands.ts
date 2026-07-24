@@ -16,7 +16,7 @@ import { fmt } from './watcher.js';
 
 const SPARK = '▁▂▃▄▅▆▇█';
 
-function sparkline(values: number[]): string {
+export function sparkline(values: number[]): string {
   const min = Math.min(...values);
   const max = Math.max(...values);
   if (min === max) return SPARK[3].repeat(values.length);
