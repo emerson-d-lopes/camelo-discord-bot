@@ -41,27 +41,43 @@ three on push.
 - **Commands** implement the `Command` interface (`{ data, execute }`) in
   `src/commands.ts` and are aggregated in `src/registry.ts` — add new commands
   there; both the runtime dispatcher and the deploy script read that one list.
+  Full how-to with a template: `docs/CONTRIBUTING.md`.
+- **All environment reads live in `src/config.ts`** — never read `process.env`
+  anywhere else. New vars get a default there plus a row in `.env.example` and
+  the README table.
 - **Music logic is shared.** Play/skip/stop/etc. live once in
   `src/modules/music/actions.ts`; the slash commands (`music/commands.ts`) and
   the natural-language handler (`music/mentions.ts`) both call it. Don't
-  reimplement an action in one place — extend the action core.
+  reimplement an action in one place — extend the action core. Within the
+  module: queue state + persistence is `queue.ts` (`TrackQueue`), the yt-dlp
+  spawn → buffer → resource pipeline is `stream.ts`, and `player.ts` holds the
+  session/voice lifecycle (`MusicSession`) plus track resolution.
 - Use the `ephemeral()` / `replyNoPing()` helpers in `src/interactions.ts` for
-  the common reply shapes.
+  the common reply shapes, and `voiceChannelOf`/`listenersIn`/`joinErrorText`
+  from `music/actions.ts` instead of re-deriving them.
 - Logging house style: `console.warn` for expected/non-fatal, `console.error`
   for real failures, tagged prefixes like `[music]` / `[watcher]`.
+- **Graceful shutdown**: anything that owns a timer, server, or child process
+  must be stoppable and hooked into `shutdown()` in `src/index.ts` (see
+  `stopWatcher`/`stopReminders`/`stopStatsServer`/`destroyAllSessions`).
 
 ## Security invariants (do not regress)
 
-- **Every user-supplied URL** that gets fetched goes through `safeFetch` /
-  `assertPublicHttpUrl` in `src/security.ts` (SSRF guard: blocks private /
-  loopback / metadata, re-validates each redirect hop, pins the resolved IP at
-  connect via the guarded undici dispatcher). Response bodies use `cappedText`.
-- `/play` URLs are restricted to the media allowlist (`isAllowedMediaUrl`).
+- **Every outbound fetch** — user-supplied *or* hardcoded-host — goes through
+  `safeFetch` / `assertPublicHttpUrl` in `src/security.ts` (SSRF guard: blocks
+  private / loopback / metadata, re-validates each redirect hop, pins the
+  resolved IP at connect via the guarded undici dispatcher). Response bodies
+  use `cappedText`.
+- `/play` URLs are restricted to the media allowlist (`isAllowedMediaUrl`),
+  re-checked at spawn time in `advance()` for playlist entries.
 - All user-facing rate limiting goes through `rateAllow` (token buckets).
 - Never echo an untrusted string (track title, user input) into message
   **content** without `allowedMentions: { parse: [] }`.
 - LLM outputs are JSON-schema-constrained; validate the parsed action before
-  acting on it.
+  acting on it (`normalize()` in `music/intent.ts`).
+- CI runs Semgrep as blocking. Suppress a false positive inline with a scoped
+  `// nosemgrep: <rule-id>` plus a one-line justification — never blanket
+  ignores, never suppress a true positive.
 
 ## Workflow notes
 

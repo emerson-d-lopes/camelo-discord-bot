@@ -156,11 +156,13 @@ sequenceDiagram
 
 ### Playback state machine
 
-`MusicSession` is the one stateful object of note. An `advancing` flag
-serialises track transitions so overlapping triggers — the idle event, a player
-error, and a fresh enqueue during an autoplay fetch — can't fork two download
-processes. Queue, loop mode, and volume are written through to SQLite on every
-change, so a restart rejoins mid-queue.
+`MusicSession` is the one stateful object of note; it wires a `TrackQueue`
+(queue state + persistence, `music/queue.ts`) and the yt-dlp stream pipeline
+(`music/stream.ts`) to the voice connection. An `advancing` flag serialises
+track transitions so overlapping triggers — the idle event, a player error, and
+a fresh enqueue during an autoplay fetch — can't fork two download processes.
+Queue, loop mode, and autoplay are written through to SQLite on every change,
+so a restart rejoins mid-queue.
 
 ```mermaid
 stateDiagram-v2
@@ -184,11 +186,11 @@ Each earns its place by removing a specific failure mode or duplication.
 | **Command + Registry** | `commands.ts`, `registry.ts` | Commands are `{ data, execute }`; one registry feeds both the dispatcher and the deploy script, so they can't drift. |
 | **Fallback pipeline** | `music/intent.ts` | Intent resolves rules → local LLM → default; the model only runs on what the rules miss. |
 | **Strategy (detection)** | `watcher/scraper.ts` | Price via selector → JSON-LD → meta → CSS heuristic → Mercado Livre API; first hit wins. |
-| **Producer–consumer buffer** | `music/player.ts` | A 32 MB `PassThrough` between yt-dlp and the encoder keeps jitter from stuttering playback. |
+| **Producer–consumer buffer** | `music/stream.ts` | A 32 MB `PassThrough` between yt-dlp and the encoder keeps jitter from stuttering playback. |
 | **Semaphores & a mutex** | `player.ts`, `ollama.ts` | The `advancing` flag serialises advance; global caps bound concurrent yt-dlp and LLM calls. |
 | **Token-bucket limits** | `security.ts` | Per-user and per-guild buckets, tighter for heavy commands; stale buckets pruned hourly. |
 | **SSRF guard + allowlist** | `security.ts` | User URLs re-validated per redirect hop and IP-pinned at connect; `/play` links host-allowlisted. |
-| **Write-through + restore** | `player.ts`, `db.ts` | Session state persists on change and reloads on boot — the queue survives a restart. |
+| **Write-through + restore** | `music/queue.ts`, `db.ts` | Queue state persists on change and reloads on boot — the queue survives a restart. |
 | **Graceful degradation** | `ai`, `watcher` | No Ollama → AI off; no Chrome → alerts drop the screenshot. A missing capability never crashes the bot. |
 | **Schema-constrained LLM** | `intent.ts`, `recommend.ts` | The model answers in a fixed JSON schema with an action enum — injected text can't change what the bot does. |
 | **Lazy resolution** | `recommend.ts`, `player.ts` | Spotify/DJ picks queue as `ytsearch1:` placeholders, resolved only when the track comes up. |
@@ -260,16 +262,23 @@ Notes:
 
 ## Configuration (`.env`)
 
-| Variable | Purpose |
-|----------|---------|
-| `DISCORD_TOKEN` | Bot token (required) |
-| `CLIENT_ID` | Application ID (required to register commands) |
-| `GUILD_ID` | Server id — registers commands instantly to one server; empty = global (~1h) |
-| `CHECK_INTERVAL_MINUTES` | Default price-check interval (30) |
-| `OLLAMA_URL` | Ollama server (`http://127.0.0.1:11434`; Docker uses `host.docker.internal`) |
-| `OLLAMA_MODEL` | Model for intent, DJ, and `/ask` (`llama3.2:3b`) |
-| `ASSISTANT_MODEL` | Bigger model for open conversation (`gemma4:12b`) |
-| `PUPPETEER_EXECUTABLE_PATH` | Chrome/Chromium path for screenshots (auto on desktop; set in Docker) |
+All environment reads live in `src/config.ts` — copy `.env.example` and fill in
+the two required values.
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `DISCORD_TOKEN` | **yes** | — | Bot token |
+| `CLIENT_ID` | **yes** | — | Application ID (needed to register commands) |
+| `GUILD_ID` | no | global | Server id — registers commands instantly to one server; empty = global (~1h) |
+| `CHECK_INTERVAL_MINUTES` | no | `30` | Default price-check interval (per-watch override via `/watch interval`) |
+| `OWNER_ID` | no | — | Locks `/stats` to this user id (on top of admin-only) |
+| `OLLAMA_URL` | no | `http://127.0.0.1:11434` | Ollama server (Docker compose points it at `host.docker.internal`) |
+| `OLLAMA_MODEL` | no | `llama3.2:3b` | Model for intent, DJ, and `/ask` |
+| `ASSISTANT_MODEL` | no | `gemma4:12b` | Bigger model for open conversation |
+| `STATS_PORT` | no | off | Enables the local stats dashboard on this port |
+| `STATS_HOST` | no | `127.0.0.1` | Dashboard bind address; non-loopback **requires** `STATS_TOKEN` |
+| `STATS_TOKEN` | no | — | Bearer/`?token=` auth for the dashboard endpoints |
+| `PUPPETEER_EXECUTABLE_PATH` | no | auto | Chrome/Chromium path for screenshots (auto-detected on desktop; set in Docker) |
 
 ## Security
 
